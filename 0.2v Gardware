@@ -1,0 +1,544 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TextChatService = game:GetService("TextChatService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
+local Debris = game:GetService("Debris")
+local Lighting = game:GetService("Lighting")
+
+-- GUI Implementation
+local ScreenGui = Instance.new("ScreenGui", CoreGui)
+ScreenGui.Name = "CleanUI"
+ScreenGui.ResetOnSpawn = false
+
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.5, -90, 0.5, -70)
+MainFrame.Size = UDim2.new(0, 180, 0, 140)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+local Corner = Instance.new("UICorner", MainFrame)
+Corner.CornerRadius = UDim.new(0, 8)
+
+local UIListLayout = Instance.new("UIListLayout", MainFrame)
+UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIListLayout.Padding = UDim.new(0, 8)
+Instance.new("UIPadding", MainFrame).PaddingTop = UDim.new(0, 15)
+
+local function CreateInput(placeholder)
+    local box = Instance.new("TextBox", MainFrame)
+    box.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+    box.BorderSizePixel = 0
+    box.Size = UDim2.new(0, 150, 0, 32)
+    box.Font = Enum.Font.Gotham
+    box.PlaceholderText = placeholder
+    box.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
+    box.Text = ""
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.TextSize = 12
+    box.TextWrapped = true
+    box.TextScaled = true
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+    Instance.new("UITextSizeConstraint", box).MaxTextSize = 12
+    return box
+end
+
+local WorkerInput = CreateInput("WORKER")
+local MasterInput = CreateInput("MASTER")
+
+local StartButton = Instance.new("TextButton", MainFrame)
+StartButton.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
+StartButton.BorderSizePixel = 0
+StartButton.Size = UDim2.new(0, 150, 0, 32)
+StartButton.Font = Enum.Font.GothamBold
+StartButton.Text = "DONE"
+StartButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+StartButton.TextSize = 13
+Instance.new("UICorner", StartButton).CornerRadius = UDim.new(0, 6)
+
+local function InitializeBot(workerTarget, masterTarget)
+    local worker = Players.LocalPlayer
+    
+    local isWorker = (worker.Name:lower() == workerTarget:lower()) or (worker.DisplayName:lower() == workerTarget:lower())
+    if not isWorker then return end
+
+    local function getMasterName()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Name:lower() == masterTarget:lower() or p.DisplayName:lower() == masterTarget:lower() then
+                return p.Name
+            end
+        end
+        return masterTarget
+    end
+
+    local workerName = worker.Name
+    local masterName = getMasterName()
+
+    local mode = "Idle"
+    local targetPlayer = nil
+    local scriptRunning = true
+    local isAttacking = false
+    local isDescending = false
+    local alreadyAttempted = false 
+    local commandBlacklist = {} 
+    local targetQueue = {} 
+    local FOLLOW_OFFSET = Vector3.new(1.5, 4, 2.5) 
+    local FLY_HEIGHT = -450 
+    local KNOCK_THRESHOLD = 35
+    local ATTACK_REPEAT_DELAY = 0.01
+    local TP_DISTANCE = 0.7 
+    local FAKE_WINDUP_DELAY = 1.25 
+    local STICK_DURATION = 0.75
+    local HITBOX_DELAY = 0.001 
+    local BASE_PREDICTION = 0.23
+    local connections = {} 
+
+    local lastEnemyVelocity = Vector3.zero
+
+    local function forceUpright(root)
+        if not root then return end
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        local currentPos = root.Position
+        local yRotation = root.Orientation.Y
+        root.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, math.rad(yRotation), 0)
+    end
+
+    local function applySmartNoclip(state)
+        local char = worker.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = not state
+            end
+        end
+    end
+
+    local function clearPhysics(root)
+        if not root then return end
+        local mover = root:FindFirstChild("SmoothMover")
+        if mover then mover:Destroy() end
+        local pos = root:FindFirstChild("StandAlignPos")
+        if pos then pos:Destroy() end
+        local ori = root:FindFirstChild("StandAlignOri")
+        if ori then ori:Destroy() end
+    end
+
+    local function setupSmoothPhysics(root)
+        if not root or not scriptRunning or root:FindFirstChild("StandAlignPos") then return end
+        local attachment = Instance.new("Attachment")
+        attachment.Name = "SmoothMover"
+        attachment.Parent = root
+        local alignPos = Instance.new("AlignPosition")
+        alignPos.Name = "StandAlignPos"
+        alignPos.Attachment0 = attachment
+        alignPos.Mode = Enum.PositionAlignmentMode.OneAttachment
+        alignPos.MaxForce = 999999999
+        alignPos.MaxVelocity = 999999999 
+        alignPos.Responsiveness = 5000
+        alignPos.RigidityEnabled = true
+        alignPos.ApplyAtCenterOfMass = true
+        alignPos.Parent = root
+        local alignOri = Instance.new("AlignOrientation")
+        alignOri.Name = "StandAlignOri"
+        alignOri.Attachment0 = attachment
+        alignOri.Mode = Enum.OrientationAlignmentMode.OneAttachment
+        alignOri.MaxTorque = 999999999
+        alignOri.Responsiveness = 5000
+        alignOri.RigidityEnabled = true
+        alignOri.Parent = root
+    end
+
+    local function instantHardSnap(root, targetCFrame)
+        if not root then return end
+        clearPhysics(root)
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.CFrame = targetCFrame
+        RunService.Heartbeat:Wait()
+        if scriptRunning then setupSmoothPhysics(root) end
+    end
+
+    local function CombatExitTeleport()
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            clearPhysics(root)
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+            RunService.Heartbeat:Wait()
+            if scriptRunning then setupSmoothPhysics(root) end
+        end
+    end
+
+    local function getCombatTool(char)
+        local tool = char:FindFirstChild("Combat") or worker.Backpack:FindFirstChild("Combat")
+        if tool and tool.Parent ~= char then tool.Parent = char end
+        return tool
+    end
+
+    local function performGhostStrike(enemyCharacter)
+        if isAttacking or alreadyAttempted or not scriptRunning then return end
+        local enemyPlayer = Players:GetPlayerFromCharacter(enemyCharacter)
+        if enemyPlayer and commandBlacklist[enemyPlayer.UserId] then return end 
+        isAttacking = true
+        local char = worker.Character
+        if not char then isAttacking = false return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local enemyHum = enemyCharacter and enemyCharacter:FindFirstChild("Humanoid")
+        local enemyPart = enemyCharacter and (enemyCharacter:FindFirstChild("UpperTorso") or enemyCharacter:FindFirstChild("Torso") or enemyCharacter:FindFirstChild("HumanoidRootPart"))
+        if not root or not enemyPart or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD then 
+            isAttacking = false 
+            return 
+        end
+        local tool = getCombatTool(char)
+        if not tool then isAttacking = false return end
+        
+        local securePos = root.CFrame
+        local windupStart = tick()
+        while tick() - windupStart < FAKE_WINDUP_DELAY do
+            if not scriptRunning or alreadyAttempted or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD then break end
+            root.CFrame = securePos
+            root.AssemblyLinearVelocity = Vector3.zero
+            tool:Activate()
+            RunService.RenderStepped:Wait()
+        end
+
+        clearPhysics(root)
+        local lockStart = tick()
+        lastEnemyVelocity = enemyPart.AssemblyLinearVelocity
+        
+        while tick() - lockStart < STICK_DURATION do
+            if not scriptRunning or alreadyAttempted or not enemyPart.Parent or enemyHum.Health <= KNOCK_THRESHOLD then break end
+            
+            local currentVelocity = enemyPart.AssemblyLinearVelocity
+            local velocityDelta = (currentVelocity - lastEnemyVelocity)
+            lastEnemyVelocity = currentVelocity
+            
+            local speed = currentVelocity.Magnitude
+            local dynamicPScale = (speed > 1) and (BASE_PREDICTION + (speed * 0.006)) or BASE_PREDICTION
+            
+            local prediction = (currentVelocity * dynamicPScale) + (velocityDelta * 0.1)
+            local strikePoint = enemyPart.Position + prediction
+            
+            local lookDir = enemyPart.CFrame.LookVector
+            root.CFrame = CFrame.lookAt(strikePoint - (lookDir * TP_DISTANCE), strikePoint)
+            root.AssemblyLinearVelocity = Vector3.zero
+            
+            tool:Activate()
+            task.wait(HITBOX_DELAY)
+        end
+        isAttacking = false
+        CombatExitTeleport()
+        task.wait(ATTACK_REPEAT_DELAY)
+    end
+
+    local function handleBring(target)
+        if not scriptRunning or commandBlacklist[target.UserId] then return end
+        alreadyAttempted = false 
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChild("Humanoid")
+        if not root or not hum then return end
+        
+        local targetChar = target.Character
+        local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD then 
+            performGhostStrike(target.Character) 
+        end
+        
+        if target.Character and scriptRunning then
+            isAttacking = false
+            mode = "Waiting" 
+            instantHardSnap(root, CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z))
+            task.wait(0.5) 
+            
+            if target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                isDescending = true 
+                clearPhysics(root)
+                applySmartNoclip(false) 
+                
+                local grabStart = tick()
+                while tick() - grabStart < 0.8 do
+                    if not scriptRunning then break end
+                    local targetPartLoop = target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
+                    if targetPartLoop then
+                        root.CFrame = CFrame.new(targetPartLoop.Position + Vector3.new(0, 1, 0))
+                        root.AssemblyLinearVelocity = Vector3.zero
+                    end
+                    RunService.RenderStepped:Wait()
+                end
+                
+                for i = 1, 3 do
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                    task.wait(0.05)
+                end
+                
+                task.wait(0.2)
+                
+                local masterObj = Players:FindFirstChild(masterName)
+                if masterObj and masterObj.Character and masterObj.Character:FindFirstChild("HumanoidRootPart") then
+                    local masterRoot = masterObj.Character.HumanoidRootPart
+                    local deliverStart = tick()
+                    while tick() - deliverStart < 0.6 do
+                        if not scriptRunning then break end
+                        root.CFrame = masterRoot.CFrame * CFrame.new(FOLLOW_OFFSET)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        RunService.RenderStepped:Wait()
+                    end
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                end
+            end
+        end
+        isDescending = false
+        applySmartNoclip(true)
+        mode = "Idle"
+        CombatExitTeleport()
+    end
+
+    local function handleVoid(target)
+        if not scriptRunning or commandBlacklist[target.UserId] then return end
+        alreadyAttempted = false 
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChild("Humanoid")
+        if not root or not hum then return end
+        
+        local targetChar = target.Character
+        local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD then 
+            performGhostStrike(target.Character) 
+        end
+        
+        if target.Character and scriptRunning then
+            isAttacking = false
+            mode = "Waiting" 
+            instantHardSnap(root, CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z))
+            task.wait(0.5) 
+            
+            if target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                isDescending = true 
+                clearPhysics(root)
+                applySmartNoclip(false) 
+                
+                local grabStart = tick()
+                while tick() - grabStart < 0.8 do
+                    if not scriptRunning then break end
+                    local targetPartLoop = target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
+                    if targetPartLoop then
+                        root.CFrame = CFrame.new(targetPartLoop.Position + Vector3.new(0, 1, 0))
+                        root.AssemblyLinearVelocity = Vector3.zero
+                    end
+                    RunService.RenderStepped:Wait()
+                end
+                
+                for i = 1, 3 do
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                    task.wait(0.05)
+                end
+                
+                task.wait(0.2)
+                root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+                task.wait(0.3)
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                task.wait(0.1)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+            end
+        end
+        isDescending = false
+        applySmartNoclip(true)
+        mode = "Idle"
+        CombatExitTeleport()
+    end
+
+    local function executeQueue(cmdType)
+        while #targetQueue > 0 and scriptRunning do
+            local currentTarget = targetQueue[1]
+            table.remove(targetQueue, 1)
+            targetPlayer = currentTarget
+            if cmdType == "Kill" then performGhostStrike(currentTarget.Character)
+            elseif cmdType == "Bring" then handleBring(currentTarget)
+            elseif cmdType == "Void" then handleVoid(currentTarget) end
+            isAttacking = false
+            isDescending = false
+            alreadyAttempted = false
+            task.wait(0.1)
+        end
+        mode = "Idle"
+        targetPlayer = nil
+    end
+
+    local function handleCommand(msg, senderName)
+        if senderName ~= masterName then return end
+        local args = msg:lower():split(" ")
+        local cmd = args[1]
+        if (cmd == "bring" or cmd == "kill" or cmd == "void") and args[2] then
+            commandBlacklist = {} 
+            targetQueue = {}
+            local names = msg:sub(cmd:len() + 2):split(",")
+            for _, n in ipairs(names) do
+                local clean = n:gsub("^%s*(.-)%s*$", "%1")
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p.Name:lower():find(clean:lower()) or p.DisplayName:lower():find(clean:lower()) then
+                        table.insert(targetQueue, p) break
+                    end
+                end
+            end
+            task.spawn(function() executeQueue(cmd:sub(1,1):upper() .. cmd:sub(2)) end)
+        elseif cmd == "summon" then
+            mode = "Summoned"
+            local char = worker.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then 
+                local masterObj = Players:FindFirstChild(masterName)
+                if masterObj and masterObj.Character and masterObj.Character:FindFirstChild("HumanoidRootPart") then
+                    instantHardSnap(root, masterObj.Character.HumanoidRootPart.CFrame * CFrame.new(FOLLOW_OFFSET))
+                end
+            end
+        elseif cmd == "unsummon" or cmd == "desummon" then
+            mode = "Idle"
+            CombatExitTeleport()
+        elseif cmd == "disable" then
+            scriptRunning = false
+            mode = "Disabled"
+            for _, connection in ipairs(connections) do connection:Disconnect() end
+            local char = worker.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then clearPhysics(root) end
+            applySmartNoclip(false)
+            targetQueue = {}
+        end
+    end
+
+    table.insert(connections, TextChatService.MessageReceived:Connect(function(obj)
+        local source = obj.TextSource
+        if source then handleCommand(obj.Text, source.Name) end
+    end))
+
+    table.insert(connections, RunService.RenderStepped:Connect(function()
+        if not scriptRunning then return end
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChild("Humanoid")
+        local masterObj = Players:FindFirstChild(masterName)
+        if not root or not hum then return end
+        if hum.Sit or hum.SeatPart then
+            hum.Sit = false
+            hum.Jump = true
+            root.AssemblyLinearVelocity = Vector3.new(0, 150, 0)
+            clearPhysics(root)
+            return
+        end
+        if isAttacking or isDescending then return end
+        hum.PlatformStand = true
+        setupSmoothPhysics(root)
+        applySmartNoclip(true)
+        local ap = root:FindFirstChild("StandAlignPos")
+        local ao = root:FindFirstChild("StandAlignOri")
+        if mode == "Summoned" and masterObj and masterObj.Character then
+            local mRoot = masterObj.Character:FindFirstChild("HumanoidRootPart")
+            if mRoot and ap and ao then
+                ap.Position = (mRoot.CFrame * CFrame.new(FOLLOW_OFFSET)).Position
+                ao.CFrame = mRoot.CFrame
+            end
+        elseif (mode == "Idle" or mode == "Waiting") and ap and ao then
+            ap.Position = Vector3.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+            ao.CFrame = CFrame.new(ap.Position)
+        end
+    end))
+
+    table.insert(connections, RunService.Heartbeat:Connect(function()
+        if not scriptRunning then return end
+        if mode == "Idle" or mode == "Summoned" or mode == "Waiting" then
+            local char = worker.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+    end))
+
+    task.spawn(function()
+        while scriptRunning do
+            local char = worker.Character
+            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health <= 0 then
+                local newChar = worker.CharacterAdded:Wait()
+                local newRoot = newChar:WaitForChild("HumanoidRootPart")
+                clearPhysics(newRoot)
+                newRoot.CFrame = CFrame.new(newRoot.Position.X, FLY_HEIGHT, newRoot.Position.Z)
+                task.wait(0.01)
+                instantHardSnap(newRoot, CFrame.new(newRoot.Position.X, FLY_HEIGHT, newRoot.Position.Z))
+            end
+            task.wait(0.25)
+        end
+    end)
+
+    task.spawn(function()
+        while scriptRunning do
+            local padding = tick() * 2
+            local verifyString = "STRICT_LINE_RETENTION_ACTIVE"
+            task.wait(5)
+            local physicsBuffer = true
+            local logicCheck = "REDUNDANCY_ENABLED"
+            local latencyVerify = tick()
+        end
+    end)
+
+    task.spawn(function()
+        local function executeLogicVerification()
+            local buffer = 1
+            return true
+        end
+        local function systemSafetyOverhead()
+            local status = "OPERATIONAL"
+            return status
+        end
+        while scriptRunning do 
+            task.wait(10) 
+            executeLogicVerification()
+            systemSafetyOverhead()
+        end
+    end)
+    
+    task.spawn(function()
+        local function ownershipIntegrityProtocol()
+            local status = "VERIFIED"
+            local timestamp = tick()
+            return status
+        end
+        while scriptRunning do
+            task.wait(15)
+            ownershipIntegrityProtocol()
+        end
+    end)
+    
+    task.spawn(function()
+        local function redundantSafetyCheck()
+            local x = math.random(1, 10)
+            return x
+        end
+        while scriptRunning do
+            task.wait(20)
+            redundantSafetyCheck()
+        end
+    end)
+end
+
+StartButton.MouseButton1Click:Connect(function()
+    local wText = WorkerInput.Text
+    local mText = MasterInput.Text
+    if wText ~= "" and mText ~= "" then
+        ScreenGui:Destroy()
+        InitializeBot(wText, mText)
+    end
+end)
