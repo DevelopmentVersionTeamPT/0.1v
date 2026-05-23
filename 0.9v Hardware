@@ -52,15 +52,14 @@ local function CreateInput(placeholder)
     return box
 end
 
--- Key Configuration
 local ValidFreeKeys = {
     ["1551-6511-6151"] = true
 }
 
--- Updated User Whitelist
 local ValidKeys = {
-    ["5981-5697-5971-957"] = "DarknessLoyal2222222", 
-    ["8515-1912-9714-196"] = "Rdougkfzglh"
+    ["5981-5697-5971-957"] = "DarknessLoyal5555555", 
+    ["8515-1912-9714-196"] = "Rdougkfzglh",
+    ["0671-5971-0791-587"] = "BigNgrAlert"
 }
 
 local ClaimedKeys = {} 
@@ -68,7 +67,6 @@ local ClaimedKeys = {}
 local KeyInput = CreateInput("LICENSE")
 local MasterInput = CreateInput("MASTER")
 
--- Autofill Logic Execution
 local currentUser = Players.LocalPlayer.Name
 for key, owner in pairs(ValidKeys) do
     if owner == currentUser then
@@ -341,163 +339,161 @@ local function InitializeBot(workerTarget, masterTarget)
         task.wait(ATTACK_REPEAT_DELAY)
     end
 
-    -- New Spam Command Logic
- local function handleSpam(target)
-    if not scriptRunning or commandBlacklist[target.UserId] then
-        return
-    end
-
-    local char = worker.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then
-        return
-    end
-
-    local targetChar = target.Character
-    local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-
-    local targetPart = targetChar and (
-        targetChar:FindFirstChild("UpperTorso")
-        or targetChar:FindFirstChild("Torso")
-        or targetChar:FindFirstChild("HumanoidRootPart")
-    )
-
-    if not targetPart or not targetHum then
-        return
-    end
-
-    isSpamBusy = true
-    applySmartNoclip(true)
-    local lastSpamVelocity = Vector3.zero
-    local lastSpamMoveDir = Vector3.new(0, 0, -1)
-    local lastSpamUnderY = nil
-    local SPAM_UNDER_DEPTH = 6
-    local SPAM_DIR_OFFSET = 1.5
-
-    local function isTargetJumping(trackPart, velocity)
-        if velocity.Y > 2.5 then
-            return true
-        end
-        local state = targetHum:GetState()
-        if state == Enum.HumanoidStateType.Jumping then
-            return true
-        end
-        if state == Enum.HumanoidStateType.Freefall and velocity.Y > 1 then
-            return true
-        end
-        return false
-    end
-
-    local function getSpamUnderCFrame()
-        local trackPart = targetChar:FindFirstChild("HumanoidRootPart") or targetPart
-        local velocity = trackPart.AssemblyLinearVelocity
-        local horizontalVel = Vector3.new(velocity.X, 0, velocity.Z)
-        local speed = horizontalVel.Magnitude
-        local rawDir = Vector3.zero
-
-        if targetHum.MoveDirection.Magnitude > 0.08 then
-            rawDir = Vector3.new(targetHum.MoveDirection.X, 0, targetHum.MoveDirection.Z)
-        elseif speed > 1.2 then
-            rawDir = horizontalVel.Unit
-        else
-            rawDir = Vector3.new(trackPart.CFrame.LookVector.X, 0, trackPart.CFrame.LookVector.Z)
+    local function handleSpam(target)
+        if not scriptRunning or commandBlacklist[target.UserId] then
+            return
         end
 
-        if rawDir.Magnitude < 0.05 then
-            rawDir = lastSpamMoveDir
-        else
-            rawDir = rawDir.Unit
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then
+            return
         end
 
-        lastSpamMoveDir = lastSpamMoveDir:Lerp(rawDir, 0.75)
-        if lastSpamMoveDir.Magnitude > 0.05 then
-            lastSpamMoveDir = lastSpamMoveDir.Unit
+        local targetChar = target.Character
+        local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+
+        local targetPart = targetChar and (
+            targetChar:FindFirstChild("UpperTorso")
+            or targetChar:FindFirstChild("Torso")
+            or targetChar:FindFirstChild("HumanoidRootPart")
+        )
+
+        if not targetPart or not targetHum then
+            return
         end
 
-        local velocityDelta = velocity - lastSpamVelocity
-        lastSpamVelocity = velocity
-        local horizontalDelta = Vector3.new(velocityDelta.X, 0, velocityDelta.Z)
-        local predScale = (speed > 1) and (BASE_PREDICTION + (speed * 0.009)) or BASE_PREDICTION
-        local predictedPos = trackPart.Position + (horizontalVel * predScale) + (horizontalDelta * 0.15)
-        local jumping = isTargetJumping(trackPart, velocity)
-        local groundUnderY = trackPart.Position.Y - SPAM_UNDER_DEPTH
+        isSpamBusy = true
+        applySmartNoclip(true)
+        local lastSpamVelocity = Vector3.zero
+        local lastSpamMoveDir = Vector3.new(0, 0, -1)
+        local lastSpamUnderY = nil
+        local SPAM_UNDER_DEPTH = 6
+        local SPAM_DIR_OFFSET = 1.5
 
-        if jumping then
-            if not lastSpamUnderY then
+        local function isTargetJumping(trackPart, velocity)
+            if velocity.Y > 2.5 then
+                return true
+            end
+            local state = targetHum:GetState()
+            if state == Enum.HumanoidStateType.Jumping then
+                return true
+            end
+            if state == Enum.HumanoidStateType.Freefall and velocity.Y > 1 then
+                return true
+            end
+            return false
+        end
+
+        local function getSpamUnderCFrame()
+            local trackPart = targetChar:FindFirstChild("HumanoidRootPart") or targetPart
+            local velocity = trackPart.AssemblyLinearVelocity
+            local horizontalVel = Vector3.new(velocity.X, 0, velocity.Z)
+            local speed = horizontalVel.Magnitude
+            local rawDir = Vector3.zero
+
+            if targetHum.MoveDirection.Magnitude > 0.08 then
+                rawDir = Vector3.new(targetHum.MoveDirection.X, 0, targetHum.MoveDirection.Z)
+            elseif speed > 1.2 then
+                rawDir = horizontalVel.Unit
+            else
+                rawDir = Vector3.new(trackPart.CFrame.LookVector.X, 0, trackPart.CFrame.LookVector.Z)
+            end
+
+            if rawDir.Magnitude < 0.05 then
+                rawDir = lastSpamMoveDir
+            else
+                rawDir = rawDir.Unit
+            end
+
+            lastSpamMoveDir = lastSpamMoveDir:Lerp(rawDir, 0.75)
+            if lastSpamMoveDir.Magnitude > 0.05 then
+                lastSpamMoveDir = lastSpamMoveDir.Unit
+            end
+
+            local velocityDelta = velocity - lastSpamVelocity
+            lastSpamVelocity = velocity
+            local horizontalDelta = Vector3.new(velocityDelta.X, 0, velocityDelta.Z)
+            local predScale = (speed > 1) and (BASE_PREDICTION + (speed * 0.009)) or BASE_PREDICTION
+            local predictedPos = trackPart.Position + (horizontalVel * predScale) + (horizontalDelta * 0.15)
+            local jumping = isTargetJumping(trackPart, velocity)
+            local groundUnderY = trackPart.Position.Y - SPAM_UNDER_DEPTH
+
+            if jumping then
+                if not lastSpamUnderY then
+                    lastSpamUnderY = groundUnderY
+                end
+            else
                 lastSpamUnderY = groundUnderY
             end
-        else
-            lastSpamUnderY = groundUnderY
+
+            local underPos = Vector3.new(
+                predictedPos.X + (lastSpamMoveDir.X * SPAM_DIR_OFFSET),
+                lastSpamUnderY,
+                predictedPos.Z + (lastSpamMoveDir.Z * SPAM_DIR_OFFSET)
+            )
+            local aimPoint = Vector3.new(predictedPos.X, lastSpamUnderY + SPAM_UNDER_DEPTH + 2, predictedPos.Z)
+            local flatAim = Vector3.new(aimPoint.X - underPos.X, 0, aimPoint.Z - underPos.Z)
+
+            if flatAim.Magnitude < 0.15 then
+                return CFrame.new(underPos)
+            end
+            return CFrame.lookAt(underPos, aimPoint, Vector3.yAxis)
         end
 
-        local underPos = Vector3.new(
-            predictedPos.X + (lastSpamMoveDir.X * SPAM_DIR_OFFSET),
-            lastSpamUnderY,
-            predictedPos.Z + (lastSpamMoveDir.Z * SPAM_DIR_OFFSET)
-        )
-        local aimPoint = Vector3.new(predictedPos.X, lastSpamUnderY + SPAM_UNDER_DEPTH + 2, predictedPos.Z)
-        local flatAim = Vector3.new(aimPoint.X - underPos.X, 0, aimPoint.Z - underPos.Z)
-
-        if flatAim.Magnitude < 0.15 then
-            return CFrame.new(underPos)
-        end
-        return CFrame.lookAt(underPos, aimPoint, Vector3.yAxis)
-    end
-
-    local function snapUnderTarget()
-        root.CFrame = getSpamUnderCFrame()
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-    end
-
-    while scriptRunning and not commandCancelled do
-        targetChar = target.Character
-        if not targetChar then
-            break
+        local function snapUnderTarget()
+            root.CFrame = getSpamUnderCFrame()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
         end
 
-        targetHum = targetChar:FindFirstChild("Humanoid")
-        targetPart = targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("HumanoidRootPart")
+        while scriptRunning and not commandCancelled do
+            targetChar = target.Character
+            if not targetChar then
+                break
+            end
 
-        if not targetPart or not targetHum or not targetHum.Parent or targetHum.Health < 1 then
-            break
-        end
+            targetHum = targetChar:FindFirstChild("Humanoid")
+            targetPart = targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("HumanoidRootPart")
 
-        clearPhysics(root)
+            if not targetPart or not targetHum or not targetHum.Parent or targetHum.Health < 1 then
+                break
+            end
 
-        local trackStart = tick()
-        while tick() - trackStart < 0.06 do
-            if commandCancelled or not targetPart.Parent or targetHum.Health < 1 then break end
+            clearPhysics(root)
+
+            local trackStart = tick()
+            while tick() - trackStart < 0.06 do
+                if commandCancelled or not targetPart.Parent or targetHum.Health < 1 then break end
+                snapUnderTarget()
+                RunService.Heartbeat:Wait()
+            end
+
+            if commandCancelled or targetHum.Health < 1 then
+                break
+            end
+
             snapUnderTarget()
-            RunService.Heartbeat:Wait()
+
+            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+            task.wait(0.006)
+            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+
+            local hitStart = tick()
+            while tick() - hitStart < 0.08 do
+                if commandCancelled or not targetPart.Parent or targetHum.Health < 1 then break end
+                snapUnderTarget()
+                RunService.Heartbeat:Wait()
+            end
         end
 
-        if commandCancelled or targetHum.Health < 1 then
-            break
-        end
+        applySmartNoclip(true)
 
-        snapUnderTarget()
+        isSpamBusy = false
+        mode = "Idle"
 
-        -- REAL SINGLE CLICK
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-        task.wait(0.006)
-        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-
-        local hitStart = tick()
-        while tick() - hitStart < 0.08 do
-            if commandCancelled or not targetPart.Parent or targetHum.Health < 1 then break end
-            snapUnderTarget()
-            RunService.Heartbeat:Wait()
-        end
+        CombatExitTeleport()
     end
-
-    applySmartNoclip(true)
-
-    isSpamBusy = false
-    mode = "Idle"
-
-    CombatExitTeleport()
-end
 
     local function handleHold(target)
         if not scriptRunning or commandBlacklist[target.UserId] then return end
@@ -629,6 +625,7 @@ end
                     if masterObj and masterObj.Character and masterObj.Character:FindFirstChild("HumanoidRootPart") then
                         local masterRoot = masterObj.Character.HumanoidRootPart
                         local deliverStart = tick()
+                        
                         while tick() - deliverStart < 0.6 do
                             if not scriptRunning then break end
                             forceUpright(root)
@@ -683,7 +680,7 @@ end
                     end
                     RunService.RenderStepped:Wait()
                 end
-                
+                 
                 if mode == "Waiting" then
                     for i = 1, 3 do
                         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
@@ -769,7 +766,93 @@ end
         CombatExitTeleport()
     end
 
-    local function executeQueue(cmdType)
+    local function handleCustomTeleport(target, coordinateVector)
+        if not scriptRunning or commandBlacklist[target.UserId] then return end
+        alreadyAttempted = false
+        isAttacking = false
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        local targetChar = target.Character
+        local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD then
+            local knockStart = tick()
+            local knockAttempts = 0
+            while targetHum and targetHum.Parent and targetHum.Health > KNOCK_THRESHOLD and scriptRunning and not commandCancelled and knockAttempts < 5 do
+                isAttacking = false
+                alreadyAttempted = false
+                performGhostStrike(target.Character, false)
+                knockAttempts = knockAttempts + 1
+                if targetHum.Health > KNOCK_THRESHOLD then
+                    task.wait(0.35)
+                end
+                if tick() - knockStart > 10 then
+                    break
+                end
+            end
+        end
+
+        if commandCancelled or not scriptRunning then return end
+        targetChar = target.Character
+        targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+        if not targetChar or not targetHum or targetHum.Health > KNOCK_THRESHOLD then
+            return
+        end
+
+        if target.Character and scriptRunning then
+            isAttacking = false
+            mode = "Waiting"
+            instantHardSnap(root, CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z))
+            task.wait(0.5)
+
+            if target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                isDescending = true
+                clearPhysics(root)
+                applySmartNoclip(false)
+
+                local grabStart = tick()
+                while tick() - grabStart < 0.8 do
+                    if not scriptRunning or mode ~= "Waiting" then break end
+                    local targetPartLoop = target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Torso") or target.Character:FindFirstChild("HumanoidRootPart")
+                    if targetPartLoop then
+                        root.CFrame = CFrame.new(targetPartLoop.Position + Vector3.new(0, 0.8, 0))
+                        root.AssemblyLinearVelocity = Vector3.zero
+                    end
+                    RunService.RenderStepped:Wait()
+                end
+
+                if mode == "Waiting" then
+                    for i = 1, 3 do
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                        task.wait(0.05)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                        task.wait(0.05)
+                    end
+                    task.wait(0.2)
+                    
+                    local deliverStart = tick()
+                    while tick() - deliverStart < 0.8 do
+                        if not scriptRunning then break end
+                        forceUpright(root)
+                        root.CFrame = CFrame.new(coordinateVector)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        RunService.RenderStepped:Wait()
+                    end
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                end
+            end
+        end
+        isDescending = false
+        applySmartNoclip(true)
+        mode = "Idle"
+        CombatExitTeleport()
+    end
+
+    local function executeQueue(cmdType, coordinateVector)
         while #targetQueue > 0 and scriptRunning and not commandCancelled do
             local currentTarget = targetQueue[1]
             table.remove(targetQueue, 1)
@@ -782,7 +865,8 @@ end
             elseif cmdType == "Void" or cmdType == "V" then handleVoid(currentTarget)
             elseif cmdType == "Safe" or cmdType == "S" then handleSafe(currentTarget)
             elseif cmdType == "Hold" or cmdType == "H" then handleHold(currentTarget)
-            elseif cmdType == "Spam" then handleSpam(currentTarget) end
+            elseif cmdType == "Spam" then handleSpam(currentTarget)
+            elseif cmdType == "CustomTeleport" then handleCustomTeleport(currentTarget, coordinateVector) end
             isAttacking = false
             isDescending = false
             alreadyAttempted = false
@@ -813,10 +897,22 @@ end
             ["cancel"] = "cancel", ["c"] = "cancel"
         }
         
+        local locationMap = {
+            ["downhill"] = Vector3.new(-563, 8, -734),
+            ["bank"] = Vector3.new(-443, 39, -284),
+            ["uphill"] = Vector3.new(481, 63, -628),
+            ["rpg"] = Vector3.new(113, -27, -276),
+            ["flamethrower"] = Vector3.new(-154, 54, -100),
+            ["rev"] = Vector3.new(-639, 22, -127),
+            ["db"] = Vector3.new(-1043, 22, -265),
+            ["food"] = Vector3.new(-328, 24, -295)
+        }
+     
         local cmd = cmdMap[rawCmd] or rawCmd
+        local customTargetVector = locationMap[rawCmd]
 
-        if cmd == "summon" or cmd == "unsummon" or cmd == "drop" or cmd == "spam" then
-            if cmd == "spam" then
+        if cmd == "summon" or cmd == "unsummon" or cmd == "drop" or cmd == "spam" or customTargetVector then
+            if cmd == "spam" or customTargetVector then
                 commandCancelled = true
             end
             targetQueue = {}
@@ -826,15 +922,25 @@ end
             isSpamBusy = false
         end
 
-        if (cmd == "bring" or cmd == "kill" or cmd == "knock" or cmd == "void" or cmd == "safe" or cmd == "hold" or cmd == "spam") then
+        if (cmd == "bring" or cmd == "kill" or cmd == "knock" or cmd == "void" or cmd == "safe" or cmd == "hold" or cmd == "spam" or customTargetVector) then
             commandCancelled = false
             commandBlacklist = {} 
             targetQueue = {}
-            if not args[2] and (cmd == "safe" or cmd == "hold") then
+            
+            local targetString = ""
+            if customTargetVector then
+                targetString = msg:sub(args[1]:len() + 2)
+            else
+                if args[2] then
+                    targetString = msg:sub(args[1]:len() + 2)
+                end
+            end
+
+            if targetString == "" and (cmd == "safe" or cmd == "hold") then
                 local mObj = Players:FindFirstChild(masterName)
                 if mObj then table.insert(targetQueue, mObj) end
-            elseif args[2] then
-                local names = msg:sub(args[1]:len() + 2):split(",")
+            elseif targetString ~= "" then
+                local names = targetString:split(",")
                 for _, n in ipairs(names) do
                     local clean = n:gsub("^%s*(.-)%s*$", "%1")
                     for _, p in ipairs(Players:GetPlayers()) do
@@ -844,7 +950,12 @@ end
                     end
                 end
             end
-            task.spawn(function() executeQueue(cmd:sub(1,1):upper() .. cmd:sub(2)) end)
+            
+            if customTargetVector then
+                task.spawn(function() executeQueue("CustomTeleport", customTargetVector) end)
+            else
+                task.spawn(function() executeQueue(cmd:sub(1,1):upper() .. cmd:sub(2)) end)
+            end
         elseif cmd == "cancel" then
             cancelAllCommands()
         elseif cmd == "drop" then
@@ -968,7 +1079,6 @@ end
         end
     end)
 
-    -- Logic Retention Loops (Restored Full Protocol)
     task.spawn(function()
         while scriptRunning do
             local validationToken = "STRICT_LINE_RETENTION_PROTOCOL_V4_DELAY_PATCH"
@@ -1019,7 +1129,8 @@ end
     task.spawn(function()
         local function memoryOverheadBuffer()
             local buffer = {}
-            for i = 1, 50 do table.insert(buffer, i) end
+            for i = 1, 50 do 
+                table.insert(buffer, i) end
             return #buffer
         end
         while scriptRunning do
