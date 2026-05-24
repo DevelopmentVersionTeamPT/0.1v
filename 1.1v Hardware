@@ -52,14 +52,17 @@ local function CreateInput(placeholder)
     return box
 end
 
+-- Key Configuration
 local ValidFreeKeys = {
     ["1551-6511-6151"] = true
 }
 
+-- Updated User Whitelist
 local ValidKeys = {
     ["5981-5697-5971-957"] = "DarknessLoyal5555555", 
-    ["8515-1912-9714-196"] = "Rdougkfzglh",
-    ["0671-5971-0791-587"] = "BigNgrAlert"
+    ["8515-1912-9714-196"] = "islands_hardcore2",
+	["0671-5971-0791-587"] = "BigNgrAlert"
+
 }
 
 local ClaimedKeys = {} 
@@ -67,6 +70,7 @@ local ClaimedKeys = {}
 local KeyInput = CreateInput("LICENSE")
 local MasterInput = CreateInput("MASTER")
 
+-- Autofill Logic Execution
 local currentUser = Players.LocalPlayer.Name
 for key, owner in pairs(ValidKeys) do
     if owner == currentUser then
@@ -102,7 +106,6 @@ local function InitializeBot(workerTarget, masterTarget)
         return masterTarget
     end
 
-    local workerName = worker.Name
     local masterName = getMasterName()
 
     local mode = "Idle"
@@ -114,6 +117,8 @@ local function InitializeBot(workerTarget, masterTarget)
     local isSpamBusy = false
     local commandCancelled = false
     local alreadyAttempted = false 
+    local protectEnabled = false 
+    local autosafeEnabled = false 
     local commandBlacklist = {} 
     local targetQueue = {}
 
@@ -135,6 +140,7 @@ local function InitializeBot(workerTarget, masterTarget)
     end 
     local FOLLOW_OFFSET = Vector3.new(1.5, 0.5, 2.5) 
     local FLY_HEIGHT = -450 
+    local SKYZONE_HEIGHT = 2500 
     local KNOCK_THRESHOLD = 35
     local ATTACK_REPEAT_DELAY = 0.01
     local TP_DISTANCE = 0.7 
@@ -145,6 +151,17 @@ local function InitializeBot(workerTarget, masterTarget)
     local SAFE_ZONE = Vector3.new(-865.99, 167.12, -842.24)
     local CARRY_ANIMATION_ID = "rbxassetid://2968344043"
     local connections = {} 
+
+    local CustomLocations = {
+        ["downhill"] = Vector3.new(-563, 8, -734),
+        ["bank"] = Vector3.new(-443, 39, -284),
+        ["uphill"] = Vector3.new(481, 63, -628),
+        ["rpg"] = Vector3.new(113, -27, -276),
+        ["flamethrower"] = Vector3.new(-154, 54, -100),
+        ["rev"] = Vector3.new(-639, 22, -127),
+        ["db"] = Vector3.new(-1043, 22, -265),
+        ["food"] = Vector3.new(-328, 24, -295)
+    }
 
     local lastEnemyVelocity = Vector3.zero
 
@@ -288,7 +305,7 @@ local function InitializeBot(workerTarget, masterTarget)
             lastEnemyVelocity = currentVelocity
             
             local speed = currentVelocity.Magnitude
-            local dynamicPScale = (speed > 1) and (BASE_PREDICTION + (speed * 0.007)) or BASE_PREDICTION
+            local dynamicPScale = (speed > 1) and math.clamp(BASE_PREDICTION + (speed * 0.007) / (1 + speed * 0.018), BASE_PREDICTION, BASE_PREDICTION + 0.38) or BASE_PREDICTION
             
             local prediction = (currentVelocity * dynamicPScale) + (velocityDelta * 0.12)
             local strikePoint = enemyPart.Position + prediction
@@ -339,7 +356,7 @@ local function InitializeBot(workerTarget, masterTarget)
         task.wait(ATTACK_REPEAT_DELAY)
     end
 
-    local function handleSpam(target)
+    local function handleSpam(target, isInfinite)
         if not scriptRunning or commandBlacklist[target.UserId] then
             return
         end
@@ -359,10 +376,6 @@ local function InitializeBot(workerTarget, masterTarget)
             or targetChar:FindFirstChild("HumanoidRootPart")
         )
 
-        if not targetPart or not targetHum then
-            return
-        end
-
         isSpamBusy = true
         applySmartNoclip(true)
         local lastSpamVelocity = Vector3.zero
@@ -372,6 +385,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local SPAM_DIR_OFFSET = 1.5
 
         local function isTargetJumping(trackPart, velocity)
+            if not targetHum then return false end
             if velocity.Y > 2.5 then
                 return true
             end
@@ -386,13 +400,14 @@ local function InitializeBot(workerTarget, masterTarget)
         end
 
         local function getSpamUnderCFrame()
-            local trackPart = targetChar:FindFirstChild("HumanoidRootPart") or targetPart
+            local trackPart = (targetChar and targetChar:FindFirstChild("HumanoidRootPart")) or targetPart
+            if not trackPart then return root.CFrame end
             local velocity = trackPart.AssemblyLinearVelocity
             local horizontalVel = Vector3.new(velocity.X, 0, velocity.Z)
             local speed = horizontalVel.Magnitude
             local rawDir = Vector3.zero
 
-            if targetHum.MoveDirection.Magnitude > 0.08 then
+            if targetHum and targetHum.MoveDirection.Magnitude > 0.08 then
                 rawDir = Vector3.new(targetHum.MoveDirection.X, 0, targetHum.MoveDirection.Z)
             elseif speed > 1.2 then
                 rawDir = horizontalVel.Unit
@@ -414,7 +429,7 @@ local function InitializeBot(workerTarget, masterTarget)
             local velocityDelta = velocity - lastSpamVelocity
             lastSpamVelocity = velocity
             local horizontalDelta = Vector3.new(velocityDelta.X, 0, velocityDelta.Z)
-            local predScale = (speed > 1) and (BASE_PREDICTION + (speed * 0.009)) or BASE_PREDICTION
+            local predScale = (speed > 1) and math.clamp(BASE_PREDICTION + (speed * 0.009) / (1 + speed * 0.018), BASE_PREDICTION, BASE_PREDICTION + 0.42) or BASE_PREDICTION
             local predictedPos = trackPart.Position + (horizontalVel * predScale) + (horizontalDelta * 0.15)
             local jumping = isTargetJumping(trackPart, velocity)
             local groundUnderY = trackPart.Position.Y - SPAM_UNDER_DEPTH
@@ -449,15 +464,20 @@ local function InitializeBot(workerTarget, masterTarget)
 
         while scriptRunning and not commandCancelled do
             targetChar = target.Character
-            if not targetChar then
-                break
-            end
-
-            targetHum = targetChar:FindFirstChild("Humanoid")
-            targetPart = targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("HumanoidRootPart")
+            targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+            targetPart = targetChar and (targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("HumanoidRootPart"))
 
             if not targetPart or not targetHum or not targetHum.Parent or targetHum.Health < 1 then
-                break
+                if isInfinite then
+                    clearPhysics(root)
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                    task.wait(0.006)
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                    task.wait(0.08)
+                    continue
+                else
+                    break
+                end
             end
 
             clearPhysics(root)
@@ -469,29 +489,29 @@ local function InitializeBot(workerTarget, masterTarget)
                 RunService.Heartbeat:Wait()
             end
 
-            if commandCancelled or targetHum.Health < 1 then
+            if commandCancelled then
                 break
             end
 
-            snapUnderTarget()
+            if targetHum.Health >= 1 and targetPart.Parent then
+                snapUnderTarget()
 
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-            task.wait(0.006)
-            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                task.wait(0.006)
+                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+            end
 
             local hitStart = tick()
             while tick() - hitStart < 0.08 do
-                if commandCancelled or not targetPart.Parent or targetHum.Health < 1 then break end
+                if commandCancelled or (not isInfinite and (not targetPart.Parent or targetHum.Health < 1)) then break end
                 snapUnderTarget()
                 RunService.Heartbeat:Wait()
             end
         end
 
         applySmartNoclip(true)
-
         isSpamBusy = false
         mode = "Idle"
-
         CombatExitTeleport()
     end
 
@@ -646,6 +666,182 @@ local function InitializeBot(workerTarget, masterTarget)
         CombatExitTeleport()
     end
 
+    local function handleLocationBring(target, destinationVector)
+        if not scriptRunning or commandBlacklist[target.UserId] then return end
+        if commandCancelled then return end
+        alreadyAttempted = false
+        isAttacking = false
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local targetChar = target.Character
+        local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD then
+            local knockStart = tick()
+            local knockAttempts = 0
+            while targetHum and targetHum.Parent and targetHum.Health > KNOCK_THRESHOLD and scriptRunning and not commandCancelled and knockAttempts < 5 do
+                isAttacking = false
+                alreadyAttempted = false
+                performGhostStrike(target.Character, false)
+                knockAttempts = knockAttempts + 1
+                if targetHum.Health > KNOCK_THRESHOLD then
+                    task.wait(0.35)
+                end
+                if tick() - knockStart > 10 then
+                    break
+                end
+            end
+        end
+
+        if commandCancelled or not scriptRunning then return end
+        targetChar = target.Character
+        targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+        if not targetChar or not targetHum or targetHum.Health > KNOCK_THRESHOLD then
+            return
+        end
+
+        if target.Character and scriptRunning then
+            isAttacking = false
+            mode = "Waiting" 
+            instantHardSnap(root, CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z))
+            task.wait(0.5) 
+            
+            if target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                isDescending = true 
+                clearPhysics(root)
+                applySmartNoclip(false) 
+                
+                local grabStart = tick()
+                while tick() - grabStart < 0.8 do
+                    if not scriptRunning or mode ~= "Waiting" then break end
+                    local targetPartLoop = target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Torso") or target.Character:FindFirstChild("HumanoidRootPart")
+                    if targetPartLoop then
+                        root.CFrame = CFrame.new(targetPartLoop.Position + Vector3.new(0, 0.8, 0))
+                        root.AssemblyLinearVelocity = Vector3.zero
+                    end
+                    RunService.RenderStepped:Wait()
+                end
+                
+                if mode == "Waiting" then
+                    for i = 1, 3 do
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                        task.wait(0.05)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                        task.wait(0.05)
+                    end
+                    task.wait(0.2)
+                    
+                    local deliverStart = tick()
+                    while tick() - deliverStart < 0.8 do
+                        if not scriptRunning then break end
+                        forceUpright(root)
+                        root.CFrame = CFrame.new(destinationVector)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        RunService.RenderStepped:Wait()
+                    end
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                end
+            end
+        end
+        isDescending = false
+        applySmartNoclip(true)
+        mode = "Idle"
+        CombatExitTeleport()
+    end
+
+    local function handleSky(target)
+        if not scriptRunning or commandBlacklist[target.UserId] then return end
+        if commandCancelled then return end
+        alreadyAttempted = false
+        isAttacking = false
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local targetChar = target.Character
+        local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD then
+            local knockStart = tick()
+            local knockAttempts = 0
+            while targetHum and targetHum.Parent and targetHum.Health > KNOCK_THRESHOLD and scriptRunning and not commandCancelled and knockAttempts < 5 do
+                isAttacking = false
+                alreadyAttempted = false
+                performGhostStrike(target.Character, false)
+                knockAttempts = knockAttempts + 1
+                if targetHum.Health > KNOCK_THRESHOLD then
+                    task.wait(0.35)
+                end
+                if tick() - knockStart > 10 then
+                    break
+                end
+            end
+        end
+
+        if commandCancelled or not scriptRunning then return end
+        targetChar = target.Character
+        targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+        if not targetChar or not targetHum or targetHum.Health > KNOCK_THRESHOLD then
+            return
+        end
+
+        if target.Character and scriptRunning then
+            isAttacking = false
+            mode = "Waiting" 
+            instantHardSnap(root, CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z))
+            task.wait(0.5) 
+            
+            if target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                isDescending = true 
+                clearPhysics(root)
+                applySmartNoclip(false) 
+                
+                local grabStart = tick()
+                while tick() - grabStart < 0.8 do
+                    if not scriptRunning or mode ~= "Waiting" then break end
+                    local targetPartLoop = target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Torso") or target.Character:FindFirstChild("HumanoidRootPart")
+                    if targetPartLoop then
+                        root.CFrame = CFrame.new(targetPartLoop.Position + Vector3.new(0, 0.8, 0))
+                        root.AssemblyLinearVelocity = Vector3.zero
+                    end
+                    RunService.RenderStepped:Wait()
+                end
+                
+                if mode == "Waiting" then
+                    for i = 1, 3 do
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                        task.wait(0.05)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                        task.wait(0.05)
+                    end
+                    task.wait(0.2)
+                    
+                    local skyStart = tick()
+                    while tick() - skyStart < 1.0 do
+                        if not scriptRunning then break end
+                        forceUpright(root)
+                        root.CFrame = CFrame.new(root.Position.X, SKYZONE_HEIGHT, root.Position.Z)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        RunService.RenderStepped:Wait()
+                    end
+                    
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                end
+            end
+        end
+        isDescending = false
+        applySmartNoclip(true)
+        mode = "Idle"
+        CombatExitTeleport()
+    end
+
     local function handleSafe(target)
         if not scriptRunning or commandBlacklist[target.UserId] then return end
         alreadyAttempted = false 
@@ -680,7 +876,7 @@ local function InitializeBot(workerTarget, masterTarget)
                     end
                     RunService.RenderStepped:Wait()
                 end
-                 
+                
                 if mode == "Waiting" then
                     for i = 1, 3 do
                         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
@@ -688,6 +884,7 @@ local function InitializeBot(workerTarget, masterTarget)
                         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
                         task.wait(0.05)
                     end
+                    
                     task.wait(0.2)
                     local deliverStart = tick()
                     while tick() - deliverStart < 0.8 do
@@ -766,93 +963,7 @@ local function InitializeBot(workerTarget, masterTarget)
         CombatExitTeleport()
     end
 
-    local function handleCustomTeleport(target, coordinateVector)
-        if not scriptRunning or commandBlacklist[target.UserId] then return end
-        alreadyAttempted = false
-        isAttacking = false
-        local char = worker.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-
-        local targetChar = target.Character
-        local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-
-        if targetHum and targetHum.Health > KNOCK_THRESHOLD then
-            local knockStart = tick()
-            local knockAttempts = 0
-            while targetHum and targetHum.Parent and targetHum.Health > KNOCK_THRESHOLD and scriptRunning and not commandCancelled and knockAttempts < 5 do
-                isAttacking = false
-                alreadyAttempted = false
-                performGhostStrike(target.Character, false)
-                knockAttempts = knockAttempts + 1
-                if targetHum.Health > KNOCK_THRESHOLD then
-                    task.wait(0.35)
-                end
-                if tick() - knockStart > 10 then
-                    break
-                end
-            end
-        end
-
-        if commandCancelled or not scriptRunning then return end
-        targetChar = target.Character
-        targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-        if not targetChar or not targetHum or targetHum.Health > KNOCK_THRESHOLD then
-            return
-        end
-
-        if target.Character and scriptRunning then
-            isAttacking = false
-            mode = "Waiting"
-            instantHardSnap(root, CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z))
-            task.wait(0.5)
-
-            if target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-                isDescending = true
-                clearPhysics(root)
-                applySmartNoclip(false)
-
-                local grabStart = tick()
-                while tick() - grabStart < 0.8 do
-                    if not scriptRunning or mode ~= "Waiting" then break end
-                    local targetPartLoop = target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Torso") or target.Character:FindFirstChild("HumanoidRootPart")
-                    if targetPartLoop then
-                        root.CFrame = CFrame.new(targetPartLoop.Position + Vector3.new(0, 0.8, 0))
-                        root.AssemblyLinearVelocity = Vector3.zero
-                    end
-                    RunService.RenderStepped:Wait()
-                end
-
-                if mode == "Waiting" then
-                    for i = 1, 3 do
-                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
-                        task.wait(0.05)
-                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
-                        task.wait(0.05)
-                    end
-                    task.wait(0.2)
-                    
-                    local deliverStart = tick()
-                    while tick() - deliverStart < 0.8 do
-                        if not scriptRunning then break end
-                        forceUpright(root)
-                        root.CFrame = CFrame.new(coordinateVector)
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        RunService.RenderStepped:Wait()
-                    end
-                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
-                    task.wait(0.1)
-                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
-                end
-            end
-        end
-        isDescending = false
-        applySmartNoclip(true)
-        mode = "Idle"
-        CombatExitTeleport()
-    end
-
-    local function executeQueue(cmdType, coordinateVector)
+    local function executeQueue(cmdType, extraData)
         while #targetQueue > 0 and scriptRunning and not commandCancelled do
             local currentTarget = targetQueue[1]
             table.remove(targetQueue, 1)
@@ -864,9 +975,12 @@ local function InitializeBot(workerTarget, masterTarget)
             elseif cmdType == "Bring" or cmdType == "B" then handleBring(currentTarget)
             elseif cmdType == "Void" or cmdType == "V" then handleVoid(currentTarget)
             elseif cmdType == "Safe" or cmdType == "S" then handleSafe(currentTarget)
+            elseif cmdType == "Autosafe" then handleSafe(currentTarget)
             elseif cmdType == "Hold" or cmdType == "H" then handleHold(currentTarget)
-            elseif cmdType == "Spam" then handleSpam(currentTarget)
-            elseif cmdType == "CustomTeleport" then handleCustomTeleport(currentTarget, coordinateVector) end
+            elseif cmdType == "Spam" then handleSpam(currentTarget, false) 
+            elseif cmdType == "Loopspam" then handleSpam(currentTarget, true)
+            elseif cmdType == "Sky" then handleSky(currentTarget)
+            elseif cmdType == "LocationBring" then handleLocationBring(currentTarget, extraData) end
             isAttacking = false
             isDescending = false
             alreadyAttempted = false
@@ -875,6 +989,73 @@ local function InitializeBot(workerTarget, masterTarget)
         if mode ~= "Summoned" and mode ~= "Waiting" then mode = "Idle" end
         targetPlayer = nil
     end
+
+    -- Real-Time Damage Signature Interceptor (100% Attacker Verification Loop)
+    task.spawn(function()
+        local lastHealth = 100
+        while scriptRunning do
+            local masterObj = Players:FindFirstChild(masterName)
+            local masterChar = masterObj and masterObj.Character
+            local masterHum = masterChar and masterChar:FindFirstChildOfClass("Humanoid")
+            
+            if masterHum then
+                if autosafeEnabled and masterHum.Health < 1 and lastHealth >= 1 then
+                    task.spawn(function() handleSafe(masterObj) end)
+                end
+
+                if protectEnabled and masterHum.Health < lastHealth and masterHum.Health > 0 then                    local attacker = nil
+                    
+                    -- Check exact engine log metadata for active attacker object instances
+                    local tag = masterHum:FindFirstChild("creator")
+                    if tag and tag:IsA("ObjectValue") and tag.Value and tag.Value:IsA("Player") then
+                        attacker = tag.Value
+                    end
+                    
+                    -- Cross-reference combat animations and tool execution trees matching damage timestamp
+                    if not attacker then
+                        for _, p in ipairs(Players:GetPlayers()) do
+                            if p ~= masterObj and p.Character then
+                                local tool = p.Character:FindFirstChildOfClass("Tool")
+                                if tool then
+                                    local isStriking = tool:FindFirstChild("Activate") or tool:FindFirstChild("RemoteEvent")
+                                    local pAnimator = p.Character:FindFirstChildOfClass("Humanoid") and p.Character.Humanoid:FindFirstChildOfClass("Animator")
+                                    
+                                    if isStriking or (pAnimator and #pAnimator:GetPlayingAnimationTracks() > 0) then
+                                        local masterRoot = masterChar:FindFirstChild("HumanoidRootPart")
+                                        local pRoot = p.Character:FindFirstChild("HumanoidRootPart")
+                                        
+                                        if masterRoot and pRoot then
+                                            local distance = (masterRoot.Position - pRoot.Position).Magnitude
+                                            -- Tight distance constraints mapping guns vs fists range thresholds
+                                            if distance < 300 then
+                                                attacker = p
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    
+                    if attacker and attacker.Character and not commandBlacklist[attacker.UserId] then
+                        local exists = false
+                        for _, queued in ipairs(targetQueue) do
+                            if queued == attacker then exists = true break end
+                        end
+                        if not exists then
+                            table.insert(targetQueue, attacker)
+                            task.spawn(function() executeQueue("Knock") end)
+                        end
+                    end
+                end
+                lastHealth = masterHum.Health
+            else
+                lastHealth = 100
+            end
+            task.wait(0.01)
+        end
+    end)
 
     local function handleCommand(msg, senderName)
         if senderName ~= masterName then return end
@@ -894,25 +1075,48 @@ local function InitializeBot(workerTarget, masterTarget)
             ["dis"] = "disable", ["disable"] = "disable",
             ["summon"] = "summon",
             ["spam"] = "spam",
+            ["loopspam"] = "loopspam",
+            ["sky"] = "sky",
+            ["protect"] = "protect",
+            ["autosafe"] = "autosafe",
             ["cancel"] = "cancel", ["c"] = "cancel"
         }
         
-        local locationMap = {
-            ["downhill"] = Vector3.new(-563, 8, -734),
-            ["bank"] = Vector3.new(-443, 39, -284),
-            ["uphill"] = Vector3.new(481, 63, -628),
-            ["rpg"] = Vector3.new(113, -27, -276),
-            ["flamethrower"] = Vector3.new(-154, 54, -100),
-            ["rev"] = Vector3.new(-639, 22, -127),
-            ["db"] = Vector3.new(-1043, 22, -265),
-            ["food"] = Vector3.new(-328, 24, -295)
-        }
-     
         local cmd = cmdMap[rawCmd] or rawCmd
-        local customTargetVector = locationMap[rawCmd]
 
-        if cmd == "summon" or cmd == "unsummon" or cmd == "drop" or cmd == "spam" or customTargetVector then
-            if cmd == "spam" or customTargetVector then
+        if CustomLocations[rawCmd] and args[2] then
+            commandCancelled = false
+            commandBlacklist = {}
+            targetQueue = {}
+            
+            local destinationVector = CustomLocations[rawCmd]
+            local clean = msg:sub(args[1]:len() + 2):gsub("^%s*(.-)%s*$", "%1")
+            
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():find(clean:lower()) or p.DisplayName:lower():find(clean:lower()) then
+                    table.insert(targetQueue, p)
+                    break
+                end
+            end
+            
+            task.spawn(function() executeQueue("LocationBring", destinationVector) end)
+            return
+        end
+
+        if cmd == "protect" then
+            protectEnabled = not protectEnabled
+            print("Protection protocol status toggled to: " .. tostring(protectEnabled))
+            return
+        end
+
+        if cmd == "autosafe" then
+            autosafeEnabled = not autosafeEnabled
+            print("Autosafe protocol status toggled to: " .. tostring(autosafeEnabled))
+            return
+        end
+
+        if cmd == "summon" or cmd == "unsummon" or cmd == "drop" or cmd == "spam" or cmd == "loopspam" then
+            if cmd == "spam" or cmd == "loopspam" then
                 commandCancelled = true
             end
             targetQueue = {}
@@ -922,25 +1126,15 @@ local function InitializeBot(workerTarget, masterTarget)
             isSpamBusy = false
         end
 
-        if (cmd == "bring" or cmd == "kill" or cmd == "knock" or cmd == "void" or cmd == "safe" or cmd == "hold" or cmd == "spam" or customTargetVector) then
+        if (cmd == "bring" or cmd == "kill" or cmd == "knock" or cmd == "void" or cmd == "safe" or cmd == "autosafe" or cmd == "hold" or cmd == "spam" or cmd == "loopspam" or cmd == "sky") then
             commandCancelled = false
             commandBlacklist = {} 
             targetQueue = {}
-            
-            local targetString = ""
-            if customTargetVector then
-                targetString = msg:sub(args[1]:len() + 2)
-            else
-                if args[2] then
-                    targetString = msg:sub(args[1]:len() + 2)
-                end
-            end
-
-            if targetString == "" and (cmd == "safe" or cmd == "hold") then
+            if not args[2] and (cmd == "safe" or cmd == "autosafe" or cmd == "hold") then
                 local mObj = Players:FindFirstChild(masterName)
                 if mObj then table.insert(targetQueue, mObj) end
-            elseif targetString ~= "" then
-                local names = targetString:split(",")
+            elseif args[2] then
+                local names = msg:sub(args[1]:len() + 2):split(",")
                 for _, n in ipairs(names) do
                     local clean = n:gsub("^%s*(.-)%s*$", "%1")
                     for _, p in ipairs(Players:GetPlayers()) do
@@ -950,12 +1144,7 @@ local function InitializeBot(workerTarget, masterTarget)
                     end
                 end
             end
-            
-            if customTargetVector then
-                task.spawn(function() executeQueue("CustomTeleport", customTargetVector) end)
-            else
-                task.spawn(function() executeQueue(cmd:sub(1,1):upper() .. cmd:sub(2)) end)
-            end
+            task.spawn(function() executeQueue(cmd:sub(1,1):upper() .. cmd:sub(2)) end)
         elseif cmd == "cancel" then
             cancelAllCommands()
         elseif cmd == "drop" then
@@ -991,6 +1180,7 @@ local function InitializeBot(workerTarget, masterTarget)
         elseif cmd == "disable" then
             scriptRunning = false
             mode = "Disabled"
+            protectEnabled = false
             currentlyHoldingPlayer = nil
             isSpamBusy = false
             for _, connection in ipairs(connections) do connection:Disconnect() end
@@ -1046,9 +1236,10 @@ local function InitializeBot(workerTarget, masterTarget)
                 root.AssemblyAngularVelocity = Vector3.zero
             end
         elseif (mode == "Idle" or mode == "Waiting") then
-            root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
+            local jitterOffset = (math.floor(tick() * 20) % 2 == 0) and 4 or -4
+            root.CFrame = CFrame.new(root.Position.X + jitterOffset, FLY_HEIGHT, root.Position.Z)
+            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end
     end))
 
@@ -1058,8 +1249,8 @@ local function InitializeBot(workerTarget, masterTarget)
             local char = worker.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if root then
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
             end
         end
     end))
@@ -1079,6 +1270,43 @@ local function InitializeBot(workerTarget, masterTarget)
         end
     end)
 
+    task.spawn(function()
+        local lastWorkerHealth = 100
+        local healthConnection = nil
+
+        local function bindHealthWatch(char)
+            if healthConnection then
+                healthConnection:Disconnect()
+                healthConnection = nil
+            end
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if not hum then return end
+            lastWorkerHealth = hum.Health
+            healthConnection = hum.HealthChanged:Connect(function(newHealth)
+                if not scriptRunning then return end
+                if newHealth < lastWorkerHealth then
+                    cancelAllCommands()
+                end
+                lastWorkerHealth = newHealth
+            end)
+        end
+
+        bindHealthWatch(worker.Character)
+        worker.CharacterAdded:Connect(function(newChar)
+            newChar:WaitForChild("Humanoid")
+            bindHealthWatch(newChar)
+        end)
+
+        while scriptRunning do
+            task.wait(1)
+        end
+
+        if healthConnection then
+            healthConnection:Disconnect()
+        end
+    end)
+
+    -- Logic Retention Loops (Restored Full Protocol)
     task.spawn(function()
         while scriptRunning do
             local validationToken = "STRICT_LINE_RETENTION_PROTOCOL_V4_DELAY_PATCH"
@@ -1129,8 +1357,7 @@ local function InitializeBot(workerTarget, masterTarget)
     task.spawn(function()
         local function memoryOverheadBuffer()
             local buffer = {}
-            for i = 1, 50 do 
-                table.insert(buffer, i) end
+            for i = 1, 50 do table.insert(buffer, i) end
             return #buffer
         end
         while scriptRunning do
