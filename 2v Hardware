@@ -60,7 +60,7 @@ local ValidFreeKeys = {
 -- Updated User Whitelist
 local ValidKeys = {
     ["5981-5697-5971-957"] = "DarknessLoyal5555555", 
-    ["8515-1912-9714-196"] = "islands_hardcore2",
+    ["8515-1912-9714-196"] = "growagarden_SnickerS",
 	["0671-5971-0791-587"] = "BigNgrAlert"
 
 }
