@@ -109,6 +109,7 @@ local function InitializeBot(workerTarget, masterTarget)
     local masterName = getMasterName()
 
     local mode = "Idle"
+    local combatMode = "fist"       -- "fist" or "gun" — determines how knocks work
     local targetPlayer = nil
     local currentlyHoldingPlayer = nil 
     local scriptRunning = true
@@ -118,9 +119,13 @@ local function InitializeBot(workerTarget, masterTarget)
     local commandCancelled = false
     local alreadyAttempted = false 
     local protectEnabled = false 
+    local protectCombatMode = "fist" -- separate mode for protect knocks
     local autosafeEnabled = false 
+    local autosafeWhitelist = {} -- list of player names to autosafe
     local commandBlacklist = {} 
     local targetQueue = {}
+    local snipeConnection = nil
+    local snipeHitboxConnection = nil
 
     local function cancelAllCommands()
         commandCancelled = true
@@ -137,17 +142,26 @@ local function InitializeBot(workerTarget, masterTarget)
         if root then clearPhysics(root) end
         applySmartNoclip(true)
         CombatExitTeleport()
+        -- Clean up snipe if active
+        if snipeConnection then
+            snipeConnection:Disconnect()
+            snipeConnection = nil
+        end
+        if snipeHitboxConnection then
+            snipeHitboxConnection:Disconnect()
+            snipeHitboxConnection = nil
+        end
     end 
     local FOLLOW_OFFSET = Vector3.new(1.5, 0.5, 2.5) 
     local FLY_HEIGHT = -450 
     local SKYZONE_HEIGHT = 2500 
-    local KNOCK_THRESHOLD = 35
+    local KNOCK_THRESHOLD = 30
     local ATTACK_REPEAT_DELAY = 0.01
-    local TP_DISTANCE = 0.7 
+    local TP_DISTANCE = 0.4 
     local FAKE_WINDUP_DELAY = 1.15 
-    local STICK_DURATION = 0.85
+    local STICK_DURATION = 1.1
     local HITBOX_DELAY = 0.001 
-    local BASE_PREDICTION = 0.23
+    local BASE_PREDICTION = 0.18
     local SAFE_ZONE = Vector3.new(-865.99, 167.12, -842.24)
     local CARRY_ANIMATION_ID = "rbxassetid://2968344043"
     local connections = {} 
@@ -243,6 +257,12 @@ local function InitializeBot(workerTarget, masterTarget)
     end
 
     local function getCombatTool(char)
+        -- Unequip any non-Combat tools first to prevent dual-wield
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") and tool.Name ~= "Combat" then
+                tool.Parent = worker.Backpack
+            end
+        end
         local tool = char:FindFirstChild("Combat") or worker.Backpack:FindFirstChild("Combat")
         if tool and tool.Parent ~= char then tool.Parent = char end
         return tool
@@ -263,6 +283,26 @@ local function InitializeBot(workerTarget, masterTarget)
         return false
     end
 
+    -- Check if a character is ragdolled/knocked (Da Hood compatible)
+    local function isRagdolled(targetChar)
+        if not targetChar then return false end
+        if not targetChar.Parent then return false end
+        local hum = targetChar:FindFirstChildOfClass("Humanoid")
+        if not hum then return true end
+        -- If they're sitting in a seat, they're NOT ragdolled
+        if hum.Sit or hum.SeatPart then return false end
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Dead then return true end
+        if state == Enum.HumanoidStateType.Physics then return true end
+        if state == Enum.HumanoidStateType.PlatformStanding then return true end
+        if targetChar:FindFirstChild("Ragdoll") then return true end
+        if targetChar:FindFirstChild("RagdollConstraint") then return true end
+        if hum.PlatformStand then return true end
+        -- Da Hood sets WalkSpeed to 0 when knocked
+        if hum.WalkSpeed == 0 and hum.Health > 0 then return true end
+        return false
+    end
+
     local function performGhostStrike(enemyCharacter, shouldStomp)
         if isAttacking or alreadyAttempted or not scriptRunning or commandCancelled then return end
         local enemyPlayer = Players:GetPlayerFromCharacter(enemyCharacter)
@@ -275,7 +315,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local enemyHum = enemyCharacter and enemyCharacter:FindFirstChild("Humanoid")
         local enemyPart = enemyCharacter and (enemyCharacter:FindFirstChild("UpperTorso") or enemyCharacter:FindFirstChild("Torso") or enemyCharacter:FindFirstChild("HumanoidRootPart"))
         
-        if not root or not enemyPart or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD then 
+        if not root or not enemyPart or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD or isRagdolled(enemyCharacter) then 
             isAttacking = false 
             return 
         end
@@ -286,7 +326,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local securePos = root.CFrame
         local windupStart = tick()
         while tick() - windupStart < FAKE_WINDUP_DELAY do
-            if not scriptRunning or commandCancelled or alreadyAttempted or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD then break end
+            if not scriptRunning or commandCancelled or alreadyAttempted or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD or isRagdolled(enemyCharacter) then break end
             root.CFrame = securePos
             root.AssemblyLinearVelocity = Vector3.zero
             tool:Activate()
@@ -296,64 +336,298 @@ local function InitializeBot(workerTarget, masterTarget)
         clearPhysics(root)
         local lockStart = tick()
         lastEnemyVelocity = enemyPart.AssemblyLinearVelocity
+        local lastEnemyPosition = enemyPart.Position
         
         while tick() - lockStart < STICK_DURATION do
-            if not scriptRunning or commandCancelled or alreadyAttempted or not enemyPart.Parent or enemyHum.Health <= KNOCK_THRESHOLD then break end
+            if not scriptRunning or commandCancelled or alreadyAttempted or not enemyPart.Parent or enemyHum.Health <= KNOCK_THRESHOLD or isRagdolled(enemyCharacter) then break end
             
-            local currentVelocity = enemyPart.AssemblyLinearVelocity
-            local velocityDelta = (currentVelocity - lastEnemyVelocity)
-            lastEnemyVelocity = currentVelocity
+            local currentPos = enemyPart.Position
+            local posDelta = (currentPos - lastEnemyPosition).Magnitude
+            lastEnemyPosition = currentPos
             
-            local speed = currentVelocity.Magnitude
-            local dynamicPScale = (speed > 1) and math.clamp(BASE_PREDICTION + (speed * 0.007) / (1 + speed * 0.018), BASE_PREDICTION, BASE_PREDICTION + 0.38) or BASE_PREDICTION
-            
-            local prediction = (currentVelocity * dynamicPScale) + (velocityDelta * 0.12)
-            local strikePoint = enemyPart.Position + prediction
-            
-            local lookDir = enemyPart.CFrame.LookVector
-            root.CFrame = CFrame.lookAt(strikePoint + (lookDir * TP_DISTANCE), strikePoint)
-            root.AssemblyLinearVelocity = Vector3.zero
-            
-            tool:Activate()
-            task.wait(HITBOX_DELAY)
+            -- Detect teleport: if position jumped more than 50 studs in one frame, snap directly
+            if posDelta > 50 then
+                root.CFrame = CFrame.lookAt(currentPos + Vector3.new(0, 0, TP_DISTANCE), currentPos)
+                root.AssemblyLinearVelocity = Vector3.zero
+                lastEnemyVelocity = Vector3.zero
+                tool:Activate()
+                task.wait(HITBOX_DELAY)
+                -- Reset lock timer so we keep tracking after their TP
+                lockStart = tick()
+            else
+                local currentVelocity = enemyPart.AssemblyLinearVelocity
+                local velocityDelta = (currentVelocity - lastEnemyVelocity)
+                lastEnemyVelocity = currentVelocity
+                
+                local speed = currentVelocity.Magnitude
+                
+                -- Detect sharp direction changes (macro A-D spam)
+                local directionChange = velocityDelta.Magnitude
+                local isMacroing = directionChange > (speed * 0.6 + 5)
+                
+                -- When macroing, reduce prediction to near-zero so we snap to actual position
+                local dynamicPScale
+                if isMacroing then
+                    dynamicPScale = 0.05
+                else
+                    dynamicPScale = (speed > 1) and math.clamp(BASE_PREDICTION + (speed * 0.007) / (1 + speed * 0.018), BASE_PREDICTION, BASE_PREDICTION + 0.38) or BASE_PREDICTION
+                end
+                
+                -- Higher delta weight to react faster to direction reversals
+                local deltaWeight = isMacroing and 0.25 or 0.15
+                local prediction = (currentVelocity * dynamicPScale) + (velocityDelta * deltaWeight)
+                local strikePoint = currentPos + prediction
+                
+                local lookDir = enemyPart.CFrame.LookVector
+                root.CFrame = CFrame.lookAt(strikePoint + (lookDir * TP_DISTANCE), strikePoint)
+                root.AssemblyLinearVelocity = Vector3.zero
+                
+                tool:Activate()
+                task.wait(HITBOX_DELAY)
+            end
+        end
+
+        -- Fire 10 extra hits to MAKE SURE they get knocked
+        if enemyPart and enemyPart.Parent and enemyHum and enemyHum.Parent then
+            for i = 1, 10 do
+                if not enemyPart.Parent then break end
+                root.CFrame = CFrame.lookAt(enemyPart.Position + (enemyPart.CFrame.LookVector * TP_DISTANCE), enemyPart.Position)
+                root.AssemblyLinearVelocity = Vector3.zero
+                tool:Activate()
+                task.wait(HITBOX_DELAY)
+            end
         end
 
         if shouldStomp and enemyHum and enemyPart and enemyPart.Parent and enemyHum.Health > 0 then
             clearPhysics(root)
-            root.CFrame = CFrame.new(enemyPart.Position.X, FLY_HEIGHT, enemyPart.Position.Z)
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            RunService.Heartbeat:Wait()
-            task.wait(0.6)
-
-            local fallDelayStart = tick()
-            while tick() - fallDelayStart < 0.7 do
+            applySmartNoclip(false)
+            
+            -- Brief hover to register above them
+            local hoverStart = tick()
+            while tick() - hoverStart < 0.3 do
                 if commandCancelled or not enemyPart.Parent or enemyHum.Health <= 0 then break end
-                root.CFrame = CFrame.new(enemyPart.Position + Vector3.new(0, 5, 0))
+                root.CFrame = CFrame.new(enemyPart.Position + Vector3.new(0, 3, 0))
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 RunService.RenderStepped:Wait()
             end
 
+            -- Stomp: stay on top and spam E
             local stompStart = tick()
-            applySmartNoclip(false)
-            while tick() - stompStart < 2.2 do 
+            while tick() - stompStart < 2.5 do 
                 if commandCancelled or not enemyPart.Parent or enemyHum.Health <= 0 then break end
                 root.CFrame = CFrame.new(enemyPart.Position + Vector3.new(0, 1.3, 0))
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.08)
+                task.wait(0.06)
                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
                 RunService.RenderStepped:Wait()
             end
-            task.wait(0.15) 
+            task.wait(0.1) 
             applySmartNoclip(true)
         end
 
         isAttacking = false
         CombatExitTeleport()
         task.wait(ATTACK_REPEAT_DELAY)
+    end
+
+    -- Gun-based knock: equips AUG, expands target hitbox, shoots until knocked, then unequips
+    local function performGunKnock(enemyCharacter, shouldStomp)
+        if isAttacking or alreadyAttempted or not scriptRunning or commandCancelled then return end
+        local enemyPlayer = Players:GetPlayerFromCharacter(enemyCharacter)
+        if enemyPlayer and commandBlacklist[enemyPlayer.UserId] then return end
+
+        local enemyHum = enemyCharacter and enemyCharacter:FindFirstChild("Humanoid")
+        local enemyRoot = enemyCharacter and enemyCharacter:FindFirstChild("HumanoidRootPart")
+        if not enemyHum or not enemyRoot or enemyHum.Health <= KNOCK_THRESHOLD or isRagdolled(enemyCharacter) then return end
+
+        isAttacking = true
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not char or not root then isAttacking = false return end
+
+        -- Unequip ALL tools first to prevent dual-wield
+        local toUnequip = {}
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Tool") then
+                table.insert(toUnequip, obj)
+            end
+        end
+        for _, tool in ipairs(toUnequip) do
+            tool.Parent = worker.Backpack
+        end
+        task.wait(0.1)
+
+        -- Find AUG specifically by checking for gun-type tool
+        local aug = nil
+        for _, item in ipairs(worker.Backpack:GetChildren()) do
+            if item:IsA("Tool") and (item.Name:lower() == "aug" or item.Name:lower():find("aug")) then
+                aug = item
+                break
+            end
+        end
+        if not aug then isAttacking = false return end
+
+        -- Equip ONLY the AUG
+        aug.Parent = char
+        task.wait(0.15)
+        
+        -- Double-check: unequip anything else that snuck in
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Tool") and obj ~= aug then
+                obj.Parent = worker.Backpack
+            end
+        end
+
+        -- Auto-reload before shooting to ensure full mag
+        clearPhysics(root)
+        root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+        task.wait(0.02)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+        task.wait(2.5)
+
+        -- Expand target hitbox
+        if enemyRoot then
+            enemyRoot.Size = Vector3.new(20, 20, 20)
+            enemyRoot.CanCollide = false
+            enemyRoot.Transparency = 0.7
+            enemyRoot.Color = Color3.fromRGB(0, 0, 0)
+            enemyRoot.Material = Enum.Material.Neon
+        end
+
+        local gunCamera = workspace.CurrentCamera
+        local shotCount = 0
+        local maxShots = 90
+
+        -- Orbit and shoot until knocked (tight orbit for indoor compatibility)
+        local gunOrbitAngle = 0
+        local GUN_ORBIT_RADIUS = 14
+        local GUN_ORBIT_HEIGHT = 30
+        applySmartNoclip(true)
+        while scriptRunning and not commandCancelled do
+            -- Check if target left or character is gone
+            if not enemyCharacter or not enemyCharacter.Parent then break end
+            if not enemyHum or not enemyHum.Parent then break end
+            if not enemyRoot or not enemyRoot.Parent then break end
+            if enemyHum.Health <= KNOCK_THRESHOLD then break end
+            if isRagdolled(enemyCharacter) then break end
+
+            gunOrbitAngle = gunOrbitAngle + 50 * (1/60)
+            local tPos = enemyRoot.Position
+            local ox = math.cos(gunOrbitAngle) * GUN_ORBIT_RADIUS
+            local oz = math.sin(gunOrbitAngle) * GUN_ORBIT_RADIUS
+            local orbitPos = Vector3.new(tPos.X + ox, tPos.Y + GUN_ORBIT_HEIGHT, tPos.Z + oz)
+
+            clearPhysics(root)
+            -- Face the target directly so shots connect
+            root.CFrame = CFrame.lookAt(orbitPos, tPos)
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+
+            -- Aim and shoot
+            local screenPos, onScreen = gunCamera:WorldToScreenPoint(tPos)
+            if onScreen and screenPos.Z > 0 then
+                VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
+                task.wait(0.02)
+                VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                task.wait(0.03)
+                VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+            end
+
+            shotCount = shotCount + 1
+            if shotCount >= maxShots then
+                -- Reload: go to idle height so we can't get shot
+                clearPhysics(root)
+                root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+                task.wait(0.02)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+                task.wait(2.5)
+                shotCount = 0
+            end
+
+            RunService.RenderStepped:Wait()
+        end
+
+        -- Fire 10 extra shots to MAKE SURE they get knocked
+        if enemyRoot and enemyRoot.Parent and enemyHum and enemyHum.Parent and enemyCharacter and enemyCharacter.Parent then
+            for i = 1, 10 do
+                if not enemyRoot or not enemyRoot.Parent or not enemyCharacter or not enemyCharacter.Parent then break end
+                local tPos = enemyRoot.Position
+                local screenPos, onScreen = gunCamera:WorldToScreenPoint(tPos)
+                if onScreen and screenPos.Z > 0 then
+                    VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
+                    task.wait(0.02)
+                    VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                    task.wait(0.03)
+                    VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+                end
+            end
+        end
+
+        -- Reset hitbox
+        if enemyRoot and enemyRoot.Parent then
+            enemyRoot.Size = Vector3.new(2, 2, 1)
+            enemyRoot.CanCollide = true
+            enemyRoot.Transparency = 1
+            enemyRoot.Material = Enum.Material.SmoothPlastic
+        end
+
+        -- Unequip AUG
+        if aug and aug.Parent == char then
+            aug.Parent = worker.Backpack
+        end
+
+        -- Stomp if needed (same as fist mode)
+        if shouldStomp and enemyHum and enemyRoot and enemyRoot.Parent and enemyHum.Health > 0 then
+            clearPhysics(root)
+            applySmartNoclip(false)
+            
+            -- Brief hover to register above them
+            local hoverStart = tick()
+            while tick() - hoverStart < 0.3 do
+                if commandCancelled or not enemyRoot.Parent or enemyHum.Health <= 0 then break end
+                root.CFrame = CFrame.new(enemyRoot.Position + Vector3.new(0, 3, 0))
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                RunService.RenderStepped:Wait()
+            end
+
+            -- Stomp: stay on top and spam E
+            local stompStart = tick()
+            while tick() - stompStart < 2.5 do
+                if commandCancelled or not enemyRoot.Parent or enemyHum.Health <= 0 then break end
+                root.CFrame = CFrame.new(enemyRoot.Position + Vector3.new(0, 1.3, 0))
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(0.06)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                RunService.RenderStepped:Wait()
+            end
+            task.wait(0.1)
+            applySmartNoclip(true)
+        end
+
+        isAttacking = false
+        CombatExitTeleport()
+        task.wait(ATTACK_REPEAT_DELAY)
+    end
+
+    -- Unified knock function that picks fist or gun based on combatMode
+    local function performKnock(enemyCharacter, shouldStomp)
+        if combatMode == "gun" then
+            performGunKnock(enemyCharacter, shouldStomp)
+        else
+            performGhostStrike(enemyCharacter, shouldStomp)
+        end
     end
 
     local function handleSpam(target, isInfinite)
@@ -525,8 +799,8 @@ local function InitializeBot(workerTarget, masterTarget)
         local targetChar = target.Character
         local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
         
-        if targetHum and targetHum.Health > KNOCK_THRESHOLD then 
-            performGhostStrike(target.Character, false) 
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD and not isRagdolled(targetChar) then 
+            performKnock(target.Character, false) 
         end
 
         if target.Character and scriptRunning then
@@ -587,29 +861,18 @@ local function InitializeBot(workerTarget, masterTarget)
         local targetChar = target.Character
         local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
 
-        if targetHum and targetHum.Health > KNOCK_THRESHOLD then
-            local knockStart = tick()
-            local knockAttempts = 0
-            while targetHum and targetHum.Parent and targetHum.Health > KNOCK_THRESHOLD and scriptRunning and not commandCancelled and knockAttempts < 5 do
-                isAttacking = false
-                alreadyAttempted = false
-                performGhostStrike(target.Character, false)
-                knockAttempts = knockAttempts + 1
-                if targetHum.Health > KNOCK_THRESHOLD then
-                    task.wait(0.35)
-                end
-                if tick() - knockStart > 10 then
-                    break
-                end
-            end
+        -- Knock the target (skip if already ragdolled)
+        if targetHum and targetHum.Health > 0 and not isRagdolled(targetChar) then
+            isAttacking = false
+            alreadyAttempted = false
+            performKnock(target.Character, false)
         end
 
         if commandCancelled or not scriptRunning then return end
+        -- Wait for ragdoll to fully register in Da Hood
+        task.wait(0.5)
         targetChar = target.Character
-        targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-        if not targetChar or not targetHum or targetHum.Health > KNOCK_THRESHOLD then
-            return
-        end
+        if not targetChar then return end
 
         if target.Character and scriptRunning then
             isAttacking = false
@@ -678,29 +941,18 @@ local function InitializeBot(workerTarget, masterTarget)
         local targetChar = target.Character
         local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
 
-        if targetHum and targetHum.Health > KNOCK_THRESHOLD then
-            local knockStart = tick()
-            local knockAttempts = 0
-            while targetHum and targetHum.Parent and targetHum.Health > KNOCK_THRESHOLD and scriptRunning and not commandCancelled and knockAttempts < 5 do
-                isAttacking = false
-                alreadyAttempted = false
-                performGhostStrike(target.Character, false)
-                knockAttempts = knockAttempts + 1
-                if targetHum.Health > KNOCK_THRESHOLD then
-                    task.wait(0.35)
-                end
-                if tick() - knockStart > 10 then
-                    break
-                end
-            end
+        -- Knock the target (skip if already ragdolled)
+        if targetHum and targetHum.Health > 0 and not isRagdolled(targetChar) then
+            isAttacking = false
+            alreadyAttempted = false
+            performKnock(target.Character, false)
         end
 
         if commandCancelled or not scriptRunning then return end
+        -- Wait for ragdoll to fully register in Da Hood
+        task.wait(0.5)
         targetChar = target.Character
-        targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-        if not targetChar or not targetHum or targetHum.Health > KNOCK_THRESHOLD then
-            return
-        end
+        if not targetChar then return end
 
         if target.Character and scriptRunning then
             isAttacking = false
@@ -765,29 +1017,18 @@ local function InitializeBot(workerTarget, masterTarget)
         local targetChar = target.Character
         local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
 
-        if targetHum and targetHum.Health > KNOCK_THRESHOLD then
-            local knockStart = tick()
-            local knockAttempts = 0
-            while targetHum and targetHum.Parent and targetHum.Health > KNOCK_THRESHOLD and scriptRunning and not commandCancelled and knockAttempts < 5 do
-                isAttacking = false
-                alreadyAttempted = false
-                performGhostStrike(target.Character, false)
-                knockAttempts = knockAttempts + 1
-                if targetHum.Health > KNOCK_THRESHOLD then
-                    task.wait(0.35)
-                end
-                if tick() - knockStart > 10 then
-                    break
-                end
-            end
+        -- Knock the target (skip if already ragdolled)
+        if targetHum and targetHum.Health > 0 and not isRagdolled(targetChar) then
+            isAttacking = false
+            alreadyAttempted = false
+            performKnock(target.Character, false)
         end
 
         if commandCancelled or not scriptRunning then return end
+        -- Wait for ragdoll to fully register in Da Hood
+        task.wait(0.5)
         targetChar = target.Character
-        targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-        if not targetChar or not targetHum or targetHum.Health > KNOCK_THRESHOLD then
-            return
-        end
+        if not targetChar then return end
 
         if target.Character and scriptRunning then
             isAttacking = false
@@ -851,8 +1092,8 @@ local function InitializeBot(workerTarget, masterTarget)
         
         local targetChar = target.Character
         local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-        if targetHum and targetHum.Health > KNOCK_THRESHOLD then 
-            performGhostStrike(target.Character, false) 
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD and not isRagdolled(targetChar) then 
+            performKnock(target.Character, false) 
         end
         
         if target.Character and scriptRunning then
@@ -915,8 +1156,8 @@ local function InitializeBot(workerTarget, masterTarget)
         
         local targetChar = target.Character
         local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
-        if targetHum and targetHum.Health > KNOCK_THRESHOLD then 
-            performGhostStrike(target.Character, false) 
+        if targetHum and targetHum.Health > KNOCK_THRESHOLD and not isRagdolled(targetChar) then 
+            performKnock(target.Character, false) 
         end
         
         if target.Character and scriptRunning then
@@ -963,6 +1204,231 @@ local function InitializeBot(workerTarget, masterTarget)
         CombatExitTeleport()
     end
 
+    -- Snipe: hitbox expand one target, orbit + shoot with rifle, stop on death/ragdoll
+
+    local Camera = workspace.CurrentCamera
+    local snipePrevCameraSubject = nil
+    local snipePrevCameraType = nil
+
+    local function stopSnipe()
+        if snipeConnection then
+            snipeConnection:Disconnect()
+            snipeConnection = nil
+        end
+        if snipeHitboxConnection then
+            snipeHitboxConnection:Disconnect()
+            snipeHitboxConnection = nil
+        end
+        -- Restore camera to the worker's humanoid
+        if snipePrevCameraSubject then
+            Camera.CameraSubject = snipePrevCameraSubject
+            snipePrevCameraSubject = nil
+        end
+        if snipePrevCameraType then
+            Camera.CameraType = snipePrevCameraType
+            snipePrevCameraType = nil
+        end
+        -- Unequip: move tool back to backpack
+        local char = worker.Character
+        if char then
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool then
+                tool.Parent = worker.Backpack
+            end
+        end
+        mode = "Idle"
+        print("[Snipe] Ended – returning to Idle")
+    end
+
+    local function getRifleTool()
+        -- Check backpack first
+        for _, item in ipairs(worker.Backpack:GetChildren()) do
+            if item:IsA("Tool") and item.Name:lower():find("aug") then
+                return item
+            end
+        end
+        -- Check if already equipped
+        local char = worker.Character
+        if char then
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool and tool.Name:lower():find("aug") then
+                return tool
+            end
+        end
+        return nil
+    end
+
+    local function equipTool(tool)
+        -- Parent directly into character to equip
+        local char = worker.Character
+        if not char then return false end
+        if tool.Parent == char then return true end -- already equipped
+        tool.Parent = char
+        task.wait(0.1)
+        return true
+    end
+
+    local function expandHitboxForTarget(targetChar)
+        local hrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        hrp.Size = Vector3.new(20, 20, 20)
+        hrp.CanCollide = false
+        hrp.Transparency = 0.7
+        hrp.Color = Color3.fromRGB(0, 0, 0)
+        hrp.Material = Enum.Material.Neon
+    end
+
+    local function resetHitboxForTarget(targetChar)
+        local hrp = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        hrp.Size = Vector3.new(2, 2, 1)
+        hrp.CanCollide = true
+        hrp.Transparency = 1
+        hrp.Material = Enum.Material.SmoothPlastic
+    end
+
+    -- Project a world position to screen coords; returns (screenPos, onScreen)
+    local function worldToScreen(worldPos)
+        local screenPos, inBounds = Camera:WorldToScreenPoint(worldPos)
+        return Vector2.new(screenPos.X, screenPos.Y), inBounds and screenPos.Z > 0
+    end
+
+    local function handleSnipe(target)
+        if not scriptRunning or commandBlacklist[target.UserId] then return end
+        if commandCancelled then return end
+
+        -- Find and equip the rifle
+        local rifle = getRifleTool()
+        if not rifle then
+            print("[Snipe] No AUG found in inventory")
+            return
+        end
+
+        if not equipTool(rifle) then
+            print("[Snipe] Failed to equip rifle")
+            return
+        end
+        task.wait(0.25) -- let equip settle
+
+        mode = "Snipe"
+
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then stopSnipe() return end
+
+        -- Point camera at the stand so the player can see what's happening
+        snipePrevCameraSubject = Camera.CameraSubject
+        snipePrevCameraType = Camera.CameraType
+        Camera.CameraSubject = root
+        Camera.CameraType = Enum.CameraType.Follow
+
+        local orbitAngle = 0
+        local ORBIT_HEIGHT = 15         -- studs above the target's head
+        local ORBIT_RADIUS = 10         -- radius of the circle above them
+        local ORBIT_SPEED = 50          -- radians per second (extremely fast orbit)
+        local SHOOT_INTERVAL = 0.1      -- fire every 0.1 seconds (spam clicks)
+        local RELOAD_TIME = 2.5         -- AUG reload animation time
+        local MAG_SIZE = 30             -- AUG magazine capacity
+        local shotsFired = 0
+        local lastShot = tick() - SHOOT_INTERVAL -- fire immediately on first cycle
+        local isReloading = false
+
+        -- Continuous hitbox expansion on target only
+        snipeHitboxConnection = RunService.RenderStepped:Connect(function()
+            local tChar = target.Character
+            if tChar then
+                expandHitboxForTarget(tChar)
+            end
+        end)
+
+        -- Orbit + shoot loop (blocks until snipe ends so executeQueue waits correctly)
+        while scriptRunning and not commandCancelled and mode == "Snipe" do
+            local tChar = target.Character
+            local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+            local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+
+            -- Stop condition: dead or ragdolled
+            if not tChar or not tHum or tHum.Health < 1 or isRagdolled(tChar) then
+                resetHitboxForTarget(tChar)
+                stopSnipe()
+                return
+            end
+
+            -- Keep camera on the stand
+            Camera.CameraSubject = root
+
+            -- Advance orbit angle each frame
+            orbitAngle = orbitAngle + ORBIT_SPEED * (1/60)
+
+            local targetPos = tRoot.Position
+            local offsetX = math.cos(orbitAngle) * ORBIT_RADIUS
+            local offsetZ = math.sin(orbitAngle) * ORBIT_RADIUS
+            -- Orbit above the target's head
+            local orbitPos = Vector3.new(targetPos.X + offsetX, targetPos.Y + ORBIT_HEIGHT, targetPos.Z + offsetZ)
+
+            -- Calculate forward direction (tangent to the circle = direction of movement)
+            local forwardX = -math.sin(orbitAngle)
+            local forwardZ = math.cos(orbitAngle)
+            local forwardPoint = orbitPos + Vector3.new(forwardX, 0, forwardZ)
+
+            -- Position stand at orbit point, facing forward (movement direction)
+            clearPhysics(root)
+            root.CFrame = CFrame.lookAt(orbitPos, forwardPoint)
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+
+            -- Shoot every 1.25 seconds (skip if still reloading)
+            if not isReloading and tick() - lastShot >= SHOOT_INTERVAL then
+                lastShot = tick()
+
+                -- Aim mouse directly at the target's HumanoidRootPart (center of character)
+                local screenPos, onScreen = worldToScreen(targetPos)
+
+                if onScreen then
+                    VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
+                    task.wait(0.03)
+                    VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                    task.wait(0.07)
+                    VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+                else
+                    local vp = Camera.ViewportSize
+                    local cx, cy = vp.X / 2, vp.Y / 2
+                    VirtualInputManager:SendMouseMoveEvent(cx, cy, game)
+                    task.wait(0.03)
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+                    task.wait(0.07)
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+                end
+
+                -- Track shots and reload after full mag
+                shotsFired = shotsFired + 1
+                if shotsFired >= MAG_SIZE then
+                    isReloading = true
+                    -- Go to idle height during reload so we can't get shot
+                    clearPhysics(root)
+                    root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    task.spawn(function()
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+                        task.wait(0.02)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+                        task.wait(RELOAD_TIME)
+                        shotsFired = 0
+                        isReloading = false
+                    end)
+                end
+            end
+
+            RunService.RenderStepped:Wait()
+        end
+
+        -- Exited loop cleanly (cancel or mode change)
+        if mode == "Snipe" then
+            stopSnipe()
+        end
+    end
+
     local function executeQueue(cmdType, extraData)
         while #targetQueue > 0 and scriptRunning and not commandCancelled do
             local currentTarget = targetQueue[1]
@@ -970,8 +1436,8 @@ local function InitializeBot(workerTarget, masterTarget)
             targetPlayer = currentTarget
             isAttacking = false
             alreadyAttempted = false
-            if cmdType == "Kill" or cmdType == "K" then performGhostStrike(currentTarget.Character, true)
-            elseif cmdType == "Knock" or cmdType == "Kn" then performGhostStrike(currentTarget.Character, false)
+            if cmdType == "Kill" or cmdType == "K" then performKnock(currentTarget.Character, true)
+            elseif cmdType == "Knock" or cmdType == "Kn" then performKnock(currentTarget.Character, false)
             elseif cmdType == "Bring" or cmdType == "B" then handleBring(currentTarget)
             elseif cmdType == "Void" or cmdType == "V" then handleVoid(currentTarget)
             elseif cmdType == "Safe" or cmdType == "S" then handleSafe(currentTarget)
@@ -979,20 +1445,44 @@ local function InitializeBot(workerTarget, masterTarget)
             elseif cmdType == "Hold" or cmdType == "H" then handleHold(currentTarget)
             elseif cmdType == "Spam" then handleSpam(currentTarget, false) 
             elseif cmdType == "Loopspam" then handleSpam(currentTarget, true)
+            elseif cmdType == "Loopknock" then
+                while scriptRunning and not commandCancelled do
+                    local tChar = currentTarget.Character
+                    local tHum = tChar and tChar:FindFirstChild("Humanoid")
+                    if tChar and tHum and tHum.Health > KNOCK_THRESHOLD and not isRagdolled(tChar) then
+                        isAttacking = false
+                        alreadyAttempted = false
+                        performKnock(tChar, false)
+                    end
+                    task.wait(0.5)
+                end
+            elseif cmdType == "Loopkill" then
+                while scriptRunning and not commandCancelled do
+                    local tChar = currentTarget.Character
+                    local tHum = tChar and tChar:FindFirstChild("Humanoid")
+                    if tChar and tHum and tHum.Health > KNOCK_THRESHOLD and not isRagdolled(tChar) then
+                        isAttacking = false
+                        alreadyAttempted = false
+                        performKnock(tChar, true)
+                    end
+                    task.wait(0.5)
+                end
             elseif cmdType == "Sky" then handleSky(currentTarget)
+            elseif cmdType == "Snipe" then handleSnipe(currentTarget)
             elseif cmdType == "LocationBring" then handleLocationBring(currentTarget, extraData) end
             isAttacking = false
             isDescending = false
             alreadyAttempted = false
             task.wait(0.1)
         end
-        if mode ~= "Summoned" and mode ~= "Waiting" then mode = "Idle" end
+        if mode ~= "Summoned" and mode ~= "Waiting" and mode ~= "Snipe" then mode = "Idle" end
         targetPlayer = nil
     end
 
     -- Real-Time Damage Signature Interceptor (100% Attacker Verification Loop)
     task.spawn(function()
         local lastHealth = 100
+        local whitelistHealthCache = {}
         while scriptRunning do
             local masterObj = Players:FindFirstChild(masterName)
             local masterChar = masterObj and masterObj.Character
@@ -1000,7 +1490,52 @@ local function InitializeBot(workerTarget, masterTarget)
             
             if masterHum then
                 if autosafeEnabled and masterHum.Health < 1 and lastHealth >= 1 then
-                    task.spawn(function() handleSafe(masterObj) end)
+                    -- Skip autosafe if the bot is already actively handling this player (e.g. food/bring/safe command on them)
+                    local alreadyHandling = (targetPlayer == masterObj) or (mode ~= "Idle" and mode ~= "Summoned")
+                    if not alreadyHandling then
+                        for _, queued in ipairs(targetQueue) do
+                            if queued == masterObj then alreadyHandling = true break end
+                        end
+                    end
+                    if not alreadyHandling then
+                        task.spawn(function() handleSafe(masterObj) end)
+                    end
+                end
+
+                -- Autosafe whitelisted players
+                if autosafeEnabled then
+                    for _, wName in ipairs(autosafeWhitelist) do
+                        local wPlayer = nil
+                        for _, p in ipairs(Players:GetPlayers()) do
+                            if p.Name:lower() == wName:lower() or p.DisplayName:lower() == wName:lower() then
+                                wPlayer = p
+                                break
+                            end
+                        end
+                        if wPlayer then
+                            local wChar = wPlayer.Character
+                            local wHum = wChar and wChar:FindFirstChildOfClass("Humanoid")
+                            local prevHealth = whitelistHealthCache[wName] or 100
+                            if wHum then
+                                if wHum.Health < 1 and prevHealth >= 1 then
+                                    -- Skip autosafe if the bot is already actively handling this player
+                                    local alreadyHandling = (targetPlayer == wPlayer) or (mode ~= "Idle" and mode ~= "Summoned")
+                                    if not alreadyHandling then
+                                        for _, queued in ipairs(targetQueue) do
+                                            if queued == wPlayer then alreadyHandling = true break end
+                                        end
+                                    end
+                                    if not alreadyHandling then
+                                        local safeTarget = wPlayer
+                                        task.spawn(function() handleSafe(safeTarget) end)
+                                    end
+                                end
+                                whitelistHealthCache[wName] = wHum.Health
+                            else
+                                whitelistHealthCache[wName] = 100
+                            end
+                        end
+                    end
                 end
 
                 if protectEnabled and masterHum.Health < lastHealth and masterHum.Health > 0 then                    local attacker = nil
@@ -1044,6 +1579,7 @@ local function InitializeBot(workerTarget, masterTarget)
                             if queued == attacker then exists = true break end
                         end
                         if not exists then
+                            combatMode = protectCombatMode
                             table.insert(targetQueue, attacker)
                             task.spawn(function() executeQueue("Knock") end)
                         end
@@ -1063,12 +1599,27 @@ local function InitializeBot(workerTarget, masterTarget)
         local rawCmd = args[1]
         
         local cmdMap = {
+            -- Fist commands (force fist mode)
             ["k"] = "kill", ["kill"] = "kill",
             ["kn"] = "knock", ["knock"] = "knock",
             ["b"] = "bring", ["bring"] = "bring",
             ["v"] = "void", ["void"] = "void",
             ["s"] = "safe", ["safe"] = "safe",
             ["h"] = "hold", ["hold"] = "hold",
+            ["sky"] = "sky",
+            ["lk"] = "loopkill", ["loopkill"] = "loopkill",
+            ["lkn"] = "loopknock", ["loopknock"] = "loopknock",
+            -- Gun commands (force gun mode)
+            ["gk"] = "gunkill", ["gunkill"] = "gunkill",
+            ["gkn"] = "gunknock", ["gunknock"] = "gunknock",
+            ["gb"] = "gunbring", ["gunbring"] = "gunbring",
+            ["gv"] = "gunvoid", ["gunvoid"] = "gunvoid",
+            ["gs"] = "gunsafe", ["gunsafe"] = "gunsafe",
+            ["gh"] = "gunhold", ["gunhold"] = "gunhold",
+            ["gsky"] = "gunsky", ["gunsky"] = "gunsky",
+            ["glk"] = "gunloopkill", ["gunloopkill"] = "gunloopkill",
+            ["glkn"] = "gunloopknock", ["gunloopknock"] = "gunloopknock",
+            -- Shared commands (mode-independent)
             ["d"] = "drop", ["drop"] = "drop",
             ["o"] = "owner", ["owner"] = "owner",
             ["u"] = "unsummon", ["unsummon"] = "unsummon", ["desummon"] = "unsummon",
@@ -1076,18 +1627,31 @@ local function InitializeBot(workerTarget, masterTarget)
             ["summon"] = "summon",
             ["spam"] = "spam",
             ["loopspam"] = "loopspam",
-            ["sky"] = "sky",
+            ["snipe"] = "snipe",
             ["protect"] = "protect",
+            ["gunprotect"] = "gunprotect", ["gp"] = "gunprotect",
             ["autosafe"] = "autosafe",
-            ["cancel"] = "cancel", ["c"] = "cancel"
+            ["cancel"] = "cancel", ["c"] = "cancel",
+            ["autosafeadd"] = "autosafeadd", ["asa"] = "autosafeadd",
+            ["autosaferemove"] = "autosaferemove", ["asr"] = "autosaferemove",
+            ["autosafelist"] = "autosafelist", ["asl"] = "autosafelist"
         }
         
         local cmd = cmdMap[rawCmd] or rawCmd
+
+        -- Determine if this is a gun command and map to the base action
+        local isGunCmd = false
+        local baseCmd = cmd
+        if cmd:sub(1, 3) == "gun" then
+            isGunCmd = true
+            baseCmd = cmd:sub(4) -- strip "gun" prefix to get base command (e.g. "gunkill" -> "kill")
+        end
 
         if CustomLocations[rawCmd] and args[2] then
             commandCancelled = false
             commandBlacklist = {}
             targetQueue = {}
+            combatMode = "fist"
             
             local destinationVector = CustomLocations[rawCmd]
             local clean = msg:sub(args[1]:len() + 2):gsub("^%s*(.-)%s*$", "%1")
@@ -1103,15 +1667,86 @@ local function InitializeBot(workerTarget, masterTarget)
             return
         end
 
+        -- Gun versions of location commands (prefix "gun" before location name)
+        local gunLocationCmd = nil
+        if rawCmd:sub(1, 3) == "gun" then
+            gunLocationCmd = rawCmd:sub(4)
+        elseif rawCmd:sub(1, 1) == "g" and CustomLocations[rawCmd:sub(2)] then
+            gunLocationCmd = rawCmd:sub(2)
+        end
+        if gunLocationCmd and CustomLocations[gunLocationCmd] and args[2] then
+            commandCancelled = false
+            commandBlacklist = {}
+            targetQueue = {}
+            combatMode = "gun"
+            
+            local destinationVector = CustomLocations[gunLocationCmd]
+            local clean = msg:sub(args[1]:len() + 2):gsub("^%s*(.-)%s*$", "%1")
+            
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():find(clean:lower()) or p.DisplayName:lower():find(clean:lower()) then
+                    table.insert(targetQueue, p)
+                    break
+                end
+            end
+            
+            task.spawn(function() executeQueue("LocationBring", destinationVector) end)
+            return
+        end
+
         if cmd == "protect" then
             protectEnabled = not protectEnabled
-            print("Protection protocol status toggled to: " .. tostring(protectEnabled))
+            if protectEnabled then protectCombatMode = "fist" end
+            print("Protection protocol (fist) status toggled to: " .. tostring(protectEnabled))
+            return
+        end
+
+        if cmd == "gunprotect" then
+            protectEnabled = not protectEnabled
+            if protectEnabled then protectCombatMode = "gun" end
+            print("Protection protocol (gun) status toggled to: " .. tostring(protectEnabled))
             return
         end
 
         if cmd == "autosafe" then
             autosafeEnabled = not autosafeEnabled
             print("Autosafe protocol status toggled to: " .. tostring(autosafeEnabled))
+            return
+        end
+
+        if cmd == "autosafeadd" and args[2] then
+            local clean = msg:sub(args[1]:len() + 2):gsub("^%s*(.-)%s*$", "%1")
+            -- Check if already in list
+            for _, name in ipairs(autosafeWhitelist) do
+                if name:lower() == clean:lower() then
+                    print("[Autosafe] " .. clean .. " is already whitelisted")
+                    return
+                end
+            end
+            table.insert(autosafeWhitelist, clean)
+            print("[Autosafe] Added " .. clean .. " to whitelist")
+            return
+        end
+
+        if cmd == "autosaferemove" and args[2] then
+            local clean = msg:sub(args[1]:len() + 2):gsub("^%s*(.-)%s*$", "%1")
+            for i, name in ipairs(autosafeWhitelist) do
+                if name:lower() == clean:lower() then
+                    table.remove(autosafeWhitelist, i)
+                    print("[Autosafe] Removed " .. clean .. " from whitelist")
+                    return
+                end
+            end
+            print("[Autosafe] " .. clean .. " was not in whitelist")
+            return
+        end
+
+        if cmd == "autosafelist" then
+            if #autosafeWhitelist == 0 then
+                print("[Autosafe] Whitelist is empty")
+            else
+                print("[Autosafe] Whitelisted: " .. table.concat(autosafeWhitelist, ", "))
+            end
             return
         end
 
@@ -1126,11 +1761,29 @@ local function InitializeBot(workerTarget, masterTarget)
             isSpamBusy = false
         end
 
-        if (cmd == "bring" or cmd == "kill" or cmd == "knock" or cmd == "void" or cmd == "safe" or cmd == "autosafe" or cmd == "hold" or cmd == "spam" or cmd == "loopspam" or cmd == "sky") then
+        -- All combat commands (fist and gun variants)
+        local combatCommands = {
+            ["kill"] = true, ["knock"] = true, ["bring"] = true, ["void"] = true,
+            ["safe"] = true, ["hold"] = true, ["sky"] = true, ["spam"] = true,
+            ["loopspam"] = true, ["snipe"] = true, ["autosafe"] = true,
+            ["loopkill"] = true, ["loopknock"] = true,
+            ["gunkill"] = true, ["gunknock"] = true, ["gunbring"] = true, ["gunvoid"] = true,
+            ["gunsafe"] = true, ["gunhold"] = true, ["gunsky"] = true,
+            ["gunloopkill"] = true, ["gunloopknock"] = true
+        }
+
+        if combatCommands[cmd] then
+            -- Set combat mode based on whether it's a gun or fist command
+            if isGunCmd then
+                combatMode = "gun"
+            else
+                combatMode = "fist"
+            end
+
             commandCancelled = false
             commandBlacklist = {} 
             targetQueue = {}
-            if not args[2] and (cmd == "safe" or cmd == "autosafe" or cmd == "hold") then
+            if not args[2] and (baseCmd == "safe" or baseCmd == "autosafe" or baseCmd == "hold") then
                 local mObj = Players:FindFirstChild(masterName)
                 if mObj then table.insert(targetQueue, mObj) end
             elseif args[2] then
@@ -1144,7 +1797,8 @@ local function InitializeBot(workerTarget, masterTarget)
                     end
                 end
             end
-            task.spawn(function() executeQueue(cmd:sub(1,1):upper() .. cmd:sub(2)) end)
+            -- Route to executeQueue using the base command name (capitalized)
+            task.spawn(function() executeQueue(baseCmd:sub(1,1):upper() .. baseCmd:sub(2)) end)
         elseif cmd == "cancel" then
             cancelAllCommands()
         elseif cmd == "drop" then
@@ -1211,6 +1865,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local hum = char and char:FindFirstChild("Humanoid")
         local masterObj = Players:FindFirstChild(masterName)
         if not root or not hum then return end
+        if mode == "Snipe" then return end -- snipe loop owns positioning entirely
 
         if hum.Sit or hum.SeatPart or isCarryAnimationPlaying() then
             if mode ~= "Summoned" and mode ~= "Waiting" then
@@ -1245,8 +1900,7 @@ local function InitializeBot(workerTarget, masterTarget)
 
     table.insert(connections, RunService.Heartbeat:Connect(function()
         if not scriptRunning then return end
-        if mode == "Idle" or mode == "Summoned" or mode == "Waiting" then
-            local char = worker.Character
+        if mode == "Idle" or mode == "Summoned" or mode == "Waiting" then            local char = worker.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if root then
                 root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
@@ -1284,7 +1938,7 @@ local function InitializeBot(workerTarget, masterTarget)
             lastWorkerHealth = hum.Health
             healthConnection = hum.HealthChanged:Connect(function(newHealth)
                 if not scriptRunning then return end
-                if newHealth < lastWorkerHealth then
+                if newHealth <= 1 then
                     cancelAllCommands()
                 end
                 lastWorkerHealth = newHealth
