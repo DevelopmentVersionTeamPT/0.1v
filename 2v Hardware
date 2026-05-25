@@ -509,6 +509,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local GUN_ORBIT_RADIUS = 14
         local GUN_ORBIT_HEIGHT = 30
         applySmartNoclip(true)
+        clearPhysics(root)
         while scriptRunning and not commandCancelled do
             -- Check if target left or character is gone
             if not enemyCharacter or not enemyCharacter.Parent then break end
@@ -523,7 +524,6 @@ local function InitializeBot(workerTarget, masterTarget)
             local oz = math.sin(gunOrbitAngle) * GUN_ORBIT_RADIUS
             local orbitPos = Vector3.new(tPos.X + ox, tPos.Y + GUN_ORBIT_HEIGHT, tPos.Z + oz)
 
-            clearPhysics(root)
             -- Face the target directly so shots connect
             root.CFrame = CFrame.lookAt(orbitPos, tPos)
             root.AssemblyLinearVelocity = Vector3.zero
@@ -542,7 +542,6 @@ local function InitializeBot(workerTarget, masterTarget)
             shotCount = shotCount + 1
             if shotCount >= maxShots then
                 -- Reload: go to idle height so we can't get shot
-                clearPhysics(root)
                 root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
@@ -575,14 +574,19 @@ local function InitializeBot(workerTarget, masterTarget)
         -- Reset hitbox
         if enemyRoot and enemyRoot.Parent then
             enemyRoot.Size = Vector3.new(2, 2, 1)
-            enemyRoot.CanCollide = true
+            enemyRoot.CanCollide = false
             enemyRoot.Transparency = 1
             enemyRoot.Material = Enum.Material.SmoothPlastic
         end
 
-        -- Unequip AUG
+        -- Unequip AUG and re-equip Combat for grab compatibility
         if aug and aug.Parent == char then
             aug.Parent = worker.Backpack
+        end
+        task.wait(0.1)
+        local combatTool = worker.Backpack:FindFirstChild("Combat")
+        if combatTool then
+            combatTool.Parent = char
         end
 
         -- Stomp if needed (same as fist mode)
@@ -791,6 +795,8 @@ local function InitializeBot(workerTarget, masterTarget)
 
     local function handleHold(target)
         if not scriptRunning or commandBlacklist[target.UserId] then return end
+        -- Don't allow holding the master (causes freak-out when knocked)
+        if target.Name == masterName then return end
         alreadyAttempted = false
         local char = worker.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -1634,7 +1640,8 @@ local function InitializeBot(workerTarget, masterTarget)
             ["cancel"] = "cancel", ["c"] = "cancel",
             ["autosafeadd"] = "autosafeadd", ["asa"] = "autosafeadd",
             ["autosaferemove"] = "autosaferemove", ["asr"] = "autosaferemove",
-            ["autosafelist"] = "autosafelist", ["asl"] = "autosafelist"
+            ["autosafelist"] = "autosafelist", ["asl"] = "autosafelist",
+            ["buygun"] = "buygun"
         }
         
         local cmd = cmdMap[rawCmd] or rawCmd
@@ -1747,6 +1754,35 @@ local function InitializeBot(workerTarget, masterTarget)
             else
                 print("[Autosafe] Whitelisted: " .. table.concat(autosafeWhitelist, ", "))
             end
+            return
+        end
+
+        if cmd == "buygun" then
+            task.spawn(function()
+                local char = worker.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+                local GUN_SHOP_POS = Vector3.new(-275, 52, -218)
+                
+                -- Set mode so the main loop doesn't override position
+                mode = "BuyGun"
+                clearPhysics(root)
+                applySmartNoclip(true)
+                
+                -- Stay at gun shop for 10 seconds
+                local stayStart = tick()
+                while tick() - stayStart < 10 do
+                    if not scriptRunning or commandCancelled then break end
+                    root.CFrame = CFrame.new(GUN_SHOP_POS)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    RunService.RenderStepped:Wait()
+                end
+                
+                -- Return to idle
+                mode = "Idle"
+                CombatExitTeleport()
+            end)
             return
         end
 
