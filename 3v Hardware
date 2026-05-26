@@ -15,52 +15,81 @@ ScreenGui.Name = "CleanUI"
 ScreenGui.ResetOnSpawn = false
 
 local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
 MainFrame.BorderSizePixel = 0
-MainFrame.Position = UDim2.new(0.5, -85, 0.5, -62)
-MainFrame.Size = UDim2.new(0, 170, 0, 125)
+MainFrame.Position = UDim2.new(0.5, -95, 0.5, -72)
+MainFrame.Size = UDim2.new(0, 190, 0, 145)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
 local UICorner = Instance.new("UICorner", MainFrame)
-UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.CornerRadius = UDim.new(0, 6)
 
-local UIListLayout = Instance.new("UIListLayout", MainFrame)
-UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-UIListLayout.Padding = UDim.new(0, 5)
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+local UIStroke = Instance.new("UIStroke", MainFrame)
+UIStroke.Color = Color3.fromRGB(50, 50, 50)
+UIStroke.Thickness = 1.2
 
-local TopPadding = Instance.new("UIPadding", MainFrame)
-TopPadding.PaddingTop = UDim.new(0, 10)
+-- X button top right
+local CloseButton = Instance.new("TextButton", MainFrame)
+CloseButton.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+CloseButton.BorderSizePixel = 0
+CloseButton.Position = UDim2.new(1, -28, 0, 6)
+CloseButton.Size = UDim2.new(0, 22, 0, 22)
+CloseButton.Font = Enum.Font.GothamBold
+CloseButton.Text = "X"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.TextSize = 13
+CloseButton.ZIndex = 2
+local closeCorner = Instance.new("UICorner", CloseButton)
+closeCorner.CornerRadius = UDim.new(0, 4)
+
+CloseButton.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+-- Content container
+local Content = Instance.new("Frame", MainFrame)
+Content.BackgroundTransparency = 1
+Content.Position = UDim2.new(0, 0, 0, 0)
+Content.Size = UDim2.new(1, 0, 1, 0)
+
+local ContentLayout = Instance.new("UIListLayout", Content)
+ContentLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ContentLayout.Padding = UDim.new(0, 8)
+ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local ContentPadding = Instance.new("UIPadding", Content)
+ContentPadding.PaddingTop = UDim.new(0, 14)
 
 local function CreateInput(placeholder)
-    local box = Instance.new("TextBox", MainFrame)
-    box.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+    local box = Instance.new("TextBox", Content)
+    box.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
     box.BorderSizePixel = 0
-    box.Size = UDim2.new(0, 150, 0, 28)
+    box.Size = UDim2.new(0, 160, 0, 30)
     box.Font = Enum.Font.Gotham
     box.PlaceholderText = placeholder
-    box.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
+    box.PlaceholderColor3 = Color3.fromRGB(70, 70, 70)
     box.Text = ""
-    box.TextColor3 = Color3.fromRGB(255, 255, 255)
-    box.TextSize = 12
-    box.TextWrapped = true
-    box.TextScaled = true
+    box.TextColor3 = Color3.fromRGB(230, 230, 230)
+    box.TextSize = 11
+    box.ClearTextOnFocus = false
     local corner = Instance.new("UICorner", box)
-    corner.CornerRadius = UDim.new(0, 4)
-    Instance.new("UITextSizeConstraint", box).MaxTextSize = 12
+    corner.CornerRadius = UDim.new(0, 5)
+    local stroke = Instance.new("UIStroke", box)
+    stroke.Color = Color3.fromRGB(45, 45, 45)
+    stroke.Thickness = 1
     return box
 end
 
 -- Key Configuration
 local ValidFreeKeys = {
-    ["1551-6511-6151"] = true
+    ["1111-2222-3333"] = true
 }
 
 -- Updated User Whitelist
 local ValidKeys = {
     ["5981-5697-5971-957"] = "DarknessLoyal5555555", 
-    ["8515-1912-9714-196"] = "growagarden_SnickerS",
+    ["8515-1912-9714-196"] = "islands_hardcore2",
 	["0671-5971-0791-587"] = "BigNgrAlert"
 
 }
@@ -80,16 +109,16 @@ for key, owner in pairs(ValidKeys) do
     end
 end
 
-local StartButton = Instance.new("TextButton", MainFrame)
+local StartButton = Instance.new("TextButton", Content)
 StartButton.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
 StartButton.BorderSizePixel = 0
-StartButton.Size = UDim2.new(0, 150, 0, 30)
+StartButton.Size = UDim2.new(0, 160, 0, 30)
 StartButton.Font = Enum.Font.GothamBold
 StartButton.Text = "VALIDATE"
 StartButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-StartButton.TextSize = 13
+StartButton.TextSize = 12
 local btnCorner = Instance.new("UICorner", StartButton)
-btnCorner.CornerRadius = UDim.new(0, 4)
+btnCorner.CornerRadius = UDim.new(0, 5)
 
 local function InitializeBot(workerTarget, masterTarget)
     local worker = Players.LocalPlayer
@@ -122,6 +151,10 @@ local function InitializeBot(workerTarget, masterTarget)
     local protectCombatMode = "fist" -- separate mode for protect knocks
     local autosafeEnabled = false 
     local autosafeWhitelist = {} -- list of player names to autosafe
+    local auraEnabled = false
+    local auraCombatMode = "fist" -- "fist" or "gun"
+    local AURA_RADIUS = 45 -- studs around master
+    local commandWhitelist = {} -- players who can use the stand and won't be targeted
     local commandBlacklist = {} 
     local targetQueue = {}
     local snipeConnection = nil
@@ -153,9 +186,9 @@ local function InitializeBot(workerTarget, masterTarget)
         end
     end 
     local FOLLOW_OFFSET = Vector3.new(1.5, 0.5, 2.5) 
-    local FLY_HEIGHT = -450 
+    local FLY_HEIGHT = 10000 
     local SKYZONE_HEIGHT = 2500 
-    local KNOCK_THRESHOLD = 30
+    local KNOCK_THRESHOLD = 5
     local ATTACK_REPEAT_DELAY = 0.01
     local TP_DISTANCE = 0.4 
     local FAKE_WINDUP_DELAY = 1.15 
@@ -174,10 +207,34 @@ local function InitializeBot(workerTarget, masterTarget)
         ["flamethrower"] = Vector3.new(-154, 54, -100),
         ["rev"] = Vector3.new(-639, 22, -127),
         ["db"] = Vector3.new(-1043, 22, -265),
-        ["food"] = Vector3.new(-328, 24, -295)
+        ["food"] = Vector3.new(-328, 24, -295),
+        ["movie"] = Vector3.new(-1006, 25, -158),
+        ["casino"] = Vector3.new(-868, 22, -140),
+        ["taco"] = Vector3.new(-278, 22, -799),
+        ["arcade"] = Vector3.new(-216, 22, -315),
+        ["firearmor"] = Vector3.new(93, 23, -332),
+        ["police"] = Vector3.new(-293, 22, -91),
+        ["key"] = Vector3.new(-271, 22, -244)
     }
 
     local lastEnemyVelocity = Vector3.zero
+
+    -- Line-of-sight check: returns true if there's a clear path between two positions (no walls)
+    local function hasLineOfSight(fromPos, toPos, ignoreList)
+        local direction = toPos - fromPos
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = ignoreList or {}
+        rayParams.IgnoreWater = true
+        local result = workspace:Raycast(fromPos, direction, rayParams)
+        if result then
+            -- Hit something — check if it's close to the target (within 5 studs means we can see them)
+            local hitDist = (result.Position - toPos).Magnitude
+            return hitDist < 5
+        end
+        -- No hit means clear line of sight
+        return true
+    end
 
     local function forceUpright(root)
         if not root then return end
@@ -289,8 +346,19 @@ local function InitializeBot(workerTarget, masterTarget)
         if not targetChar.Parent then return false end
         local hum = targetChar:FindFirstChildOfClass("Humanoid")
         if not hum then return true end
-        -- If they're sitting in a seat, they're NOT ragdolled
+        -- If they're sitting in a seat (car/chair), they're NOT ragdolled
         if hum.Sit or hum.SeatPart then return false end
+        -- If being carried, NOT ragdolled (they have a weld to another player)
+        local root = targetChar:FindFirstChild("HumanoidRootPart")
+        if root then
+            for _, child in ipairs(root:GetChildren()) do
+                if child:IsA("Weld") or child:IsA("WeldConstraint") then
+                    if child.Part1 and child.Part1.Parent ~= targetChar then
+                        return false
+                    end
+                end
+            end
+        end
         local state = hum:GetState()
         if state == Enum.HumanoidStateType.Dead then return true end
         if state == Enum.HumanoidStateType.Physics then return true end
@@ -298,15 +366,31 @@ local function InitializeBot(workerTarget, masterTarget)
         if targetChar:FindFirstChild("Ragdoll") then return true end
         if targetChar:FindFirstChild("RagdollConstraint") then return true end
         if hum.PlatformStand then return true end
-        -- Da Hood sets WalkSpeed to 0 when knocked
-        if hum.WalkSpeed == 0 and hum.Health > 0 then return true end
+        -- Da Hood sets WalkSpeed to 0 when knocked — but only if not sitting and not carried
+        if hum.WalkSpeed == 0 and hum.Health > 0 and state == Enum.HumanoidStateType.GettingUp then return true end
+        return false
+    end
+
+    -- Check if a character has a ForceField (spawn protection)
+    local function hasForceField(targetChar)
+        if not targetChar then return false end
+        if targetChar:FindFirstChildOfClass("ForceField") then return true end
         return false
     end
 
     local function performGhostStrike(enemyCharacter, shouldStomp)
         if isAttacking or alreadyAttempted or not scriptRunning or commandCancelled then return end
         local enemyPlayer = Players:GetPlayerFromCharacter(enemyCharacter)
-        if enemyPlayer and commandBlacklist[enemyPlayer.UserId] then return end 
+        if enemyPlayer and commandBlacklist[enemyPlayer.UserId] then return end
+        -- Wait out forcefield (spawn protection)
+        if hasForceField(enemyCharacter) then
+            local ffWait = tick()
+            while hasForceField(enemyCharacter) and tick() - ffWait < 5 do
+                if not scriptRunning or commandCancelled then return end
+                task.wait(0.3)
+            end
+            if not enemyCharacter or not enemyCharacter.Parent then return end
+        end
         
         isAttacking = true
         local char = worker.Character
@@ -402,30 +486,36 @@ local function InitializeBot(workerTarget, masterTarget)
             clearPhysics(root)
             applySmartNoclip(false)
             
-            -- Brief hover to register above them
-            local hoverStart = tick()
-            while tick() - hoverStart < 0.3 do
-                if commandCancelled or not enemyPart.Parent or enemyHum.Health <= 0 then break end
-                root.CFrame = CFrame.new(enemyPart.Position + Vector3.new(0, 3, 0))
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                RunService.RenderStepped:Wait()
-            end
-
-            -- Stomp: stay on top and spam E
+            -- Listen for kill sound to stop stomp early
+            local stompDone = false
+            local soundConn = enemyCharacter.DescendantAdded:Connect(function(desc)
+                if desc:IsA("Sound") and desc.SoundId:find("124468602748905") then
+                    stompDone = true
+                end
+            end)
+            
+            -- Stomp: position above torso and spam E
             local stompStart = tick()
-            while tick() - stompStart < 2.5 do 
-                if commandCancelled or not enemyPart.Parent or enemyHum.Health <= 0 then break end
-                root.CFrame = CFrame.new(enemyPart.Position + Vector3.new(0, 1.3, 0))
+            while tick() - stompStart < 3.5 do 
+                if stompDone or commandCancelled or not enemyCharacter or not enemyCharacter.Parent or enemyHum.Health <= 0 then break end
+                local stompTarget = enemyCharacter:FindFirstChild("UpperTorso") or enemyCharacter:FindFirstChild("Torso") or enemyCharacter:FindFirstChild("HumanoidRootPart")
+                if not stompTarget then break end
+                root.CFrame = CFrame.new(stompTarget.Position + Vector3.new(0, 2.5, 0))
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
+                for _, v in ipairs(enemyCharacter:GetDescendants()) do
+                    if v:IsA("ProximityPrompt") then
+                        fireproximityprompt(v)
+                    end
+                end
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.06)
+                task.wait(0.1)
                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                RunService.RenderStepped:Wait()
+                task.wait(0.1)
             end
-            task.wait(0.1) 
+            soundConn:Disconnect()
             applySmartNoclip(true)
+            task.wait(0.1) 
         end
 
         isAttacking = false
@@ -438,6 +528,15 @@ local function InitializeBot(workerTarget, masterTarget)
         if isAttacking or alreadyAttempted or not scriptRunning or commandCancelled then return end
         local enemyPlayer = Players:GetPlayerFromCharacter(enemyCharacter)
         if enemyPlayer and commandBlacklist[enemyPlayer.UserId] then return end
+        -- Wait out forcefield (spawn protection)
+        if hasForceField(enemyCharacter) then
+            local ffWait = tick()
+            while hasForceField(enemyCharacter) and tick() - ffWait < 5 do
+                if not scriptRunning or commandCancelled then return end
+                task.wait(0.3)
+            end
+            if not enemyCharacter or not enemyCharacter.Parent then return end
+        end
 
         local enemyHum = enemyCharacter and enemyCharacter:FindFirstChild("Humanoid")
         local enemyRoot = enemyCharacter and enemyCharacter:FindFirstChild("HumanoidRootPart")
@@ -460,36 +559,65 @@ local function InitializeBot(workerTarget, masterTarget)
         end
         task.wait(0.1)
 
-        -- Find AUG specifically by checking for gun-type tool
+        -- Find guns: AUG and Rifle for dual-wield
         local aug = nil
+        local rifle = nil
         for _, item in ipairs(worker.Backpack:GetChildren()) do
-            if item:IsA("Tool") and (item.Name:lower() == "aug" or item.Name:lower():find("aug")) then
-                aug = item
-                break
+            if item:IsA("Tool") then
+                local name = item.Name:lower()
+                if not aug and (name == "aug" or name:find("aug")) then
+                    aug = item
+                elseif not rifle and (name == "rifle" or name:find("rifle")) then
+                    rifle = item
+                end
             end
         end
-        if not aug then isAttacking = false return end
+        if not aug and not rifle then isAttacking = false return end
 
-        -- Equip ONLY the AUG
-        aug.Parent = char
-        task.wait(0.15)
-        
-        -- Double-check: unequip anything else that snuck in
-        for _, obj in ipairs(char:GetChildren()) do
-            if obj:IsA("Tool") and obj ~= aug then
-                obj.Parent = worker.Backpack
-            end
-        end
-
-        -- Auto-reload before shooting to ensure full mag
+        -- Skip pre-reload, go straight to shooting (reload happens after/during idle)
         clearPhysics(root)
         root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
         root.AssemblyLinearVelocity = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-        task.wait(0.02)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-        task.wait(2.5)
+        
+        -- Equip first gun to start shooting
+        if aug then
+            aug.Parent = char
+            if rifle and rifle.Parent == char then rifle.Parent = worker.Backpack end
+        elseif rifle then
+            rifle.Parent = char
+        end
+        task.wait(0.15)
+        
+        -- Wait briefly for line of sight — if target is indoors, the orbit loop handles it
+        local ignoreChars = {char}
+        if enemyCharacter then table.insert(ignoreChars, enemyCharacter) end
+        local losWaitStart = tick()
+        while tick() - losWaitStart < 3 do
+            if not scriptRunning or commandCancelled then break end
+            if not enemyRoot or not enemyRoot.Parent or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD or isRagdolled(enemyCharacter) then break end
+            local checkFrom = enemyRoot.Position + Vector3.new(0, 30, 14)
+            local checkTo = enemyRoot.Position
+            if hasLineOfSight(checkFrom, checkTo, ignoreChars) then
+                break
+            end
+            -- Also check from same height (indoor angle)
+            local sideCheck = enemyRoot.Position + Vector3.new(8, 2, 0)
+            if hasLineOfSight(sideCheck, checkTo, ignoreChars) then
+                break
+            end
+            root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+            root.AssemblyLinearVelocity = Vector3.zero
+            task.wait(0.3)
+        end
+        
+        if not scriptRunning or commandCancelled or not enemyRoot or not enemyRoot.Parent or not enemyHum or enemyHum.Health <= KNOCK_THRESHOLD or isRagdolled(enemyCharacter) then
+            if aug and aug.Parent == char then aug.Parent = worker.Backpack end
+            if rifle and rifle.Parent == char then rifle.Parent = worker.Backpack end
+            isAttacking = false
+            CombatExitTeleport()
+            return
+        end
 
         -- Expand target hitbox
         if enemyRoot then
@@ -502,12 +630,15 @@ local function InitializeBot(workerTarget, masterTarget)
 
         local gunCamera = workspace.CurrentCamera
         local shotCount = 0
-        local maxShots = 90
+        local maxShots = 9999
 
-        -- Orbit and shoot until knocked (tight orbit for indoor compatibility)
+        -- Orbit and shoot until knocked
         local gunOrbitAngle = 0
         local GUN_ORBIT_RADIUS = 14
         local GUN_ORBIT_HEIGHT = 30
+        -- Indoor fallback: orbit slightly above target's hitbox height, closer range
+        local INDOOR_ORBIT_RADIUS = 8
+        local INDOOR_ORBIT_HEIGHT = 15
         applySmartNoclip(true)
         clearPhysics(root)
         while scriptRunning and not commandCancelled do
@@ -518,54 +649,105 @@ local function InitializeBot(workerTarget, masterTarget)
             if enemyHum.Health <= KNOCK_THRESHOLD then break end
             if isRagdolled(enemyCharacter) then break end
 
-            gunOrbitAngle = gunOrbitAngle + 50 * (1/60)
+            -- Unequip any stray tools (phone, etc) that snuck in
+            for _, obj in ipairs(char:GetChildren()) do
+                if obj:IsA("Tool") and obj ~= aug and obj ~= rifle then
+                    obj.Parent = worker.Backpack
+                end
+            end
+
+            gunOrbitAngle = gunOrbitAngle + 30 * (1/60)
             local tPos = enemyRoot.Position
+            
+            -- Try outdoor orbit first (high above)
             local ox = math.cos(gunOrbitAngle) * GUN_ORBIT_RADIUS
             local oz = math.sin(gunOrbitAngle) * GUN_ORBIT_RADIUS
-            local orbitPos = Vector3.new(tPos.X + ox, tPos.Y + GUN_ORBIT_HEIGHT, tPos.Z + oz)
+            local outdoorPos = Vector3.new(tPos.X + ox, tPos.Y + GUN_ORBIT_HEIGHT, tPos.Z + oz)
+            
+            local orbitPos
+            local hasLOS = hasLineOfSight(outdoorPos, tPos, ignoreChars)
+            
+            if hasLOS then
+                -- Outdoor: orbit high above
+                orbitPos = outdoorPos
+            else
+                -- Indoor: orbit at same height, close range (shoot through doors/windows)
+                local ix = math.cos(gunOrbitAngle) * INDOOR_ORBIT_RADIUS
+                local iz = math.sin(gunOrbitAngle) * INDOOR_ORBIT_RADIUS
+                local indoorPos = Vector3.new(tPos.X + ix, tPos.Y + INDOOR_ORBIT_HEIGHT, tPos.Z + iz)
+                
+                -- Check if we can see them from this angle
+                if hasLineOfSight(indoorPos, tPos, ignoreChars) then
+                    orbitPos = indoorPos
+                    hasLOS = true
+                else
+                    -- Try multiple angles at same height to find a gap (door/window)
+                    local foundAngle = false
+                    for probe = 1, 8 do
+                        local probeAngle = gunOrbitAngle + (probe * math.pi / 4)
+                        local px = math.cos(probeAngle) * INDOOR_ORBIT_RADIUS
+                        local pz = math.sin(probeAngle) * INDOOR_ORBIT_RADIUS
+                        local probePos = Vector3.new(tPos.X + px, tPos.Y + INDOOR_ORBIT_HEIGHT, tPos.Z + pz)
+                        if hasLineOfSight(probePos, tPos, ignoreChars) then
+                            orbitPos = probePos
+                            hasLOS = true
+                            foundAngle = true
+                            break
+                        end
+                    end
+                    if not foundAngle then
+                        -- No angle works, just stay at indoor orbit and wait
+                        orbitPos = indoorPos
+                        hasLOS = false
+                    end
+                end
+            end
 
             -- Face the target directly so shots connect
             root.CFrame = CFrame.lookAt(orbitPos, tPos)
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
 
-            -- Aim and shoot
-            local screenPos, onScreen = gunCamera:WorldToScreenPoint(tPos)
-            if onScreen and screenPos.Z > 0 then
-                VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
-                task.wait(0.02)
-                VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
-                task.wait(0.03)
-                VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
-            end
+            -- Only shoot if we have line of sight
+            if hasLOS then
+                -- Shoot with current gun, re-aiming each shot
+                for burst = 1, 5 do
+                    if not enemyRoot or not enemyRoot.Parent then break end
+                    local freshPos = enemyRoot.Position
+                    local screenPos, onScreen = gunCamera:WorldToScreenPoint(freshPos)
+                    if onScreen and screenPos.Z > 0 then
+                        VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
+                        VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                        VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+                    end
+                    shotCount = shotCount + 1
+                end
 
-            shotCount = shotCount + 1
-            if shotCount >= maxShots then
-                -- Reload: go to idle height so we can't get shot
-                root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-                task.wait(0.02)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-                task.wait(2.5)
-                shotCount = 0
+                -- Swap guns every 0.4 seconds (~120 shots at 60fps with 5 shots/frame)
+                if aug and rifle and shotCount > 0 and shotCount % 120 == 0 then
+                    local currentGun = (aug.Parent == char) and aug or rifle
+                    local otherGun = (currentGun == aug) and rifle or aug
+                    if otherGun then
+                        currentGun.Parent = worker.Backpack
+                        task.wait(0.1)
+                        otherGun.Parent = char
+                        task.wait(0.1)
+                    end
+                end
             end
 
             RunService.RenderStepped:Wait()
         end
 
-        -- Fire 10 extra shots to MAKE SURE they get knocked
+        -- Fire 30 extra shots to MAKE SURE they get knocked
         if enemyRoot and enemyRoot.Parent and enemyHum and enemyHum.Parent and enemyCharacter and enemyCharacter.Parent then
-            for i = 1, 10 do
+            for i = 1, 30 do
                 if not enemyRoot or not enemyRoot.Parent or not enemyCharacter or not enemyCharacter.Parent then break end
                 local tPos = enemyRoot.Position
                 local screenPos, onScreen = gunCamera:WorldToScreenPoint(tPos)
                 if onScreen and screenPos.Z > 0 then
                     VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
-                    task.wait(0.02)
                     VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
-                    task.wait(0.03)
                     VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
                 end
             end
@@ -579,45 +761,50 @@ local function InitializeBot(workerTarget, masterTarget)
             enemyRoot.Material = Enum.Material.SmoothPlastic
         end
 
-        -- Unequip AUG and re-equip Combat for grab compatibility
+        -- Unequip guns after shooting
         if aug and aug.Parent == char then
             aug.Parent = worker.Backpack
         end
-        task.wait(0.1)
-        local combatTool = worker.Backpack:FindFirstChild("Combat")
-        if combatTool then
-            combatTool.Parent = char
+        if rifle and rifle.Parent == char then
+            rifle.Parent = worker.Backpack
         end
+        task.wait(0.1)
 
         -- Stomp if needed (same as fist mode)
         if shouldStomp and enemyHum and enemyRoot and enemyRoot.Parent and enemyHum.Health > 0 then
             clearPhysics(root)
             applySmartNoclip(false)
             
-            -- Brief hover to register above them
-            local hoverStart = tick()
-            while tick() - hoverStart < 0.3 do
-                if commandCancelled or not enemyRoot.Parent or enemyHum.Health <= 0 then break end
-                root.CFrame = CFrame.new(enemyRoot.Position + Vector3.new(0, 3, 0))
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                RunService.RenderStepped:Wait()
-            end
-
-            -- Stomp: stay on top and spam E
+            -- Listen for kill sound to stop stomp early
+            local stompDone = false
+            local soundConn = enemyCharacter.DescendantAdded:Connect(function(desc)
+                if desc:IsA("Sound") and desc.SoundId:find("124468602748905") then
+                    stompDone = true
+                end
+            end)
+            
+            -- Stomp: position above torso and spam E
             local stompStart = tick()
-            while tick() - stompStart < 2.5 do
-                if commandCancelled or not enemyRoot.Parent or enemyHum.Health <= 0 then break end
-                root.CFrame = CFrame.new(enemyRoot.Position + Vector3.new(0, 1.3, 0))
+            while tick() - stompStart < 3.5 do
+                if stompDone or commandCancelled or not enemyCharacter or not enemyCharacter.Parent or enemyHum.Health <= 0 then break end
+                local stompTarget = enemyCharacter:FindFirstChild("UpperTorso") or enemyCharacter:FindFirstChild("Torso") or enemyCharacter:FindFirstChild("HumanoidRootPart")
+                if not stompTarget then break end
+                root.CFrame = CFrame.new(stompTarget.Position + Vector3.new(0, 2.5, 0))
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
+                for _, v in ipairs(enemyCharacter:GetDescendants()) do
+                    if v:IsA("ProximityPrompt") then
+                        fireproximityprompt(v)
+                    end
+                end
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.06)
+                task.wait(0.1)
                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                RunService.RenderStepped:Wait()
+                task.wait(0.1)
             end
-            task.wait(0.1)
+            soundConn:Disconnect()
             applySmartNoclip(true)
+            task.wait(0.1)
         end
 
         isAttacking = false
@@ -1449,24 +1636,22 @@ local function InitializeBot(workerTarget, masterTarget)
             elseif cmdType == "Safe" or cmdType == "S" then handleSafe(currentTarget)
             elseif cmdType == "Autosafe" then handleSafe(currentTarget)
             elseif cmdType == "Hold" or cmdType == "H" then handleHold(currentTarget)
-            elseif cmdType == "Spam" then handleSpam(currentTarget, false) 
-            elseif cmdType == "Loopspam" then handleSpam(currentTarget, true)
-            elseif cmdType == "Loopknock" then
+            elseif cmdType == "Loopknock" or cmdType == "Autoknock" then
                 while scriptRunning and not commandCancelled do
                     local tChar = currentTarget.Character
                     local tHum = tChar and tChar:FindFirstChild("Humanoid")
-                    if tChar and tHum and tHum.Health > KNOCK_THRESHOLD and not isRagdolled(tChar) then
+                    if tChar and tHum and tHum.Health > KNOCK_THRESHOLD and not isRagdolled(tChar) and not hasForceField(tChar) then
                         isAttacking = false
                         alreadyAttempted = false
                         performKnock(tChar, false)
                     end
                     task.wait(0.5)
                 end
-            elseif cmdType == "Loopkill" then
+            elseif cmdType == "Loopkill" or cmdType == "Autokill" then
                 while scriptRunning and not commandCancelled do
                     local tChar = currentTarget.Character
                     local tHum = tChar and tChar:FindFirstChild("Humanoid")
-                    if tChar and tHum and tHum.Health > KNOCK_THRESHOLD and not isRagdolled(tChar) then
+                    if tChar and tHum and tHum.Health > KNOCK_THRESHOLD and not isRagdolled(tChar) and not hasForceField(tChar) then
                         isAttacking = false
                         alreadyAttempted = false
                         performKnock(tChar, true)
@@ -1545,6 +1730,7 @@ local function InitializeBot(workerTarget, masterTarget)
                 end
 
                 if protectEnabled and masterHum.Health < lastHealth and masterHum.Health > 0 then                    local attacker = nil
+                    local masterRoot = masterChar:FindFirstChild("HumanoidRootPart")
                     
                     -- Check exact engine log metadata for active attacker object instances
                     local tag = masterHum:FindFirstChild("creator")
@@ -1552,31 +1738,47 @@ local function InitializeBot(workerTarget, masterTarget)
                         attacker = tag.Value
                     end
                     
-                    -- Cross-reference combat animations and tool execution trees matching damage timestamp
-                    if not attacker then
+                    -- Find attacker by checking who is facing the master with a weapon
+                    if not attacker and masterRoot then
+                        local closestDist = math.huge
+                        local bestCandidate = nil
+                        
                         for _, p in ipairs(Players:GetPlayers()) do
-                            if p ~= masterObj and p.Character then
-                                local tool = p.Character:FindFirstChildOfClass("Tool")
-                                if tool then
-                                    local isStriking = tool:FindFirstChild("Activate") or tool:FindFirstChild("RemoteEvent")
-                                    local pAnimator = p.Character:FindFirstChildOfClass("Humanoid") and p.Character.Humanoid:FindFirstChildOfClass("Animator")
+                            if p ~= masterObj and p ~= worker and p.Character then
+                                local pChar = p.Character
+                                local pRoot = pChar:FindFirstChild("HumanoidRootPart")
+                                local tool = pChar:FindFirstChildOfClass("Tool")
+                                
+                                if pRoot and tool then
+                                    local distance = (masterRoot.Position - pRoot.Position).Magnitude
+                                    local isFist = (tool.Name == "Combat")
+                                    local isGun = not isFist and tool.Name ~= "Combat"
                                     
-                                    if isStriking or (pAnimator and #pAnimator:GetPlayingAnimationTracks() > 0) then
-                                        local masterRoot = masterChar:FindFirstChild("HumanoidRootPart")
-                                        local pRoot = p.Character:FindFirstChild("HumanoidRootPart")
-                                        
-                                        if masterRoot and pRoot then
-                                            local distance = (masterRoot.Position - pRoot.Position).Magnitude
-                                            -- Tight distance constraints mapping guns vs fists range thresholds
-                                            if distance < 300 then
-                                                attacker = p
-                                                break
+                                    -- Check if they're facing the master (dot product of look vector toward master)
+                                    local dirToMaster = (masterRoot.Position - pRoot.Position).Unit
+                                    local lookDir = pRoot.CFrame.LookVector
+                                    local facingScore = lookDir:Dot(dirToMaster)
+                                    
+                                    if isGun and distance < 200 and facingScore > 0.3 then
+                                        -- Gun user facing master within range
+                                        if distance < closestDist then
+                                            closestDist = distance
+                                            bestCandidate = p
+                                        end
+                                    elseif isFist and distance < 15 and facingScore > 0.4 then
+                                        -- Fist user very close and facing master
+                                        local pAnimator = pChar:FindFirstChildOfClass("Humanoid") and pChar.Humanoid:FindFirstChildOfClass("Animator")
+                                        if pAnimator and #pAnimator:GetPlayingAnimationTracks() > 0 then
+                                            if distance < closestDist then
+                                                closestDist = distance
+                                                bestCandidate = p
                                             end
                                         end
                                     end
                                 end
                             end
                         end
+                        attacker = bestCandidate
                     end
                     
                     if attacker and attacker.Character and not commandBlacklist[attacker.UserId] then
@@ -1599,8 +1801,100 @@ local function InitializeBot(workerTarget, masterTarget)
         end
     end)
 
+    -- Aura Loop: kills anyone near the master
+    task.spawn(function()
+        while scriptRunning do
+            if auraEnabled then
+                local masterObj = Players:FindFirstChild(masterName)
+                local masterChar = masterObj and masterObj.Character
+                local masterRoot = masterChar and masterChar:FindFirstChild("HumanoidRootPart")
+                
+                if masterRoot and not isAttacking then
+                    local masterPos = masterRoot.Position
+                    
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if not scriptRunning or not auraEnabled then break end
+                        -- Skip master, self, blacklisted, and whitelisted players
+                        local isWhitelisted = false
+                        for _, wlName in ipairs(commandWhitelist) do
+                            if wlName:lower() == p.Name:lower() then isWhitelisted = true break end
+                        end
+                        if p ~= masterObj and p ~= worker and not commandBlacklist[p.UserId] and not isWhitelisted then
+                            local pChar = p.Character
+                            local pHum = pChar and pChar:FindFirstChild("Humanoid")
+                            local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
+                            
+                            if pRoot and pHum and pHum.Health > KNOCK_THRESHOLD and not isRagdolled(pChar) and not hasForceField(pChar) then
+                                local dist = (pRoot.Position - masterPos).Magnitude
+                                if dist <= AURA_RADIUS then
+                                    -- Knock this player (no stomp)
+                                    combatMode = auraCombatMode
+                                    isAttacking = false
+                                    alreadyAttempted = false
+                                    performKnock(pChar, false)
+                                    task.wait(0.2)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
+
+    -- Reload both guns once when entering idle after a command
+    local hasReloadedIdle = false
+    task.spawn(function()
+        while scriptRunning do
+            if mode == "Idle" and not isAttacking and #targetQueue == 0 and targetPlayer == nil then
+                if not hasReloadedIdle then
+                    hasReloadedIdle = true
+                    local char = worker.Character
+                    if char then
+                        local guns = {}
+                        for _, item in ipairs(worker.Backpack:GetChildren()) do
+                            if item:IsA("Tool") then
+                                local name = item.Name:lower()
+                                if name == "aug" or name:find("aug") or name == "rifle" or name:find("rifle") then
+                                    table.insert(guns, item)
+                                end
+                            end
+                        end
+                        for _, gun in ipairs(guns) do
+                            if mode ~= "Idle" or isAttacking then break end
+                            gun.Parent = char
+                            task.wait(0.2)
+                            if mode ~= "Idle" then gun.Parent = worker.Backpack break end
+                            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+                            task.wait(0.02)
+                            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+                            task.wait(2)
+                            if mode ~= "Idle" then gun.Parent = worker.Backpack break end
+                            gun.Parent = worker.Backpack
+                            task.wait(0.2)
+                        end
+                    end
+                end
+            else
+                hasReloadedIdle = false
+            end
+            task.wait(0.5)
+        end
+    end)
+
     local function handleCommand(msg, senderName)
-        if senderName ~= masterName then return end
+        -- Allow master and whitelisted players to use commands
+        local isAllowed = (senderName == masterName)
+        if not isAllowed then
+            for _, wlName in ipairs(commandWhitelist) do
+                if wlName:lower() == senderName:lower() then
+                    isAllowed = true
+                    break
+                end
+            end
+        end
+        if not isAllowed then return end
         local args = msg:lower():split(" ")
         local rawCmd = args[1]
         
@@ -1615,6 +1909,8 @@ local function InitializeBot(workerTarget, masterTarget)
             ["sky"] = "sky",
             ["lk"] = "loopkill", ["loopkill"] = "loopkill",
             ["lkn"] = "loopknock", ["loopknock"] = "loopknock",
+            ["ak"] = "autokill", ["autokill"] = "autokill",
+            ["akn"] = "autoknock", ["autoknock"] = "autoknock",
             -- Gun commands (force gun mode)
             ["gk"] = "gunkill", ["gunkill"] = "gunkill",
             ["gkn"] = "gunknock", ["gunknock"] = "gunknock",
@@ -1625,14 +1921,14 @@ local function InitializeBot(workerTarget, masterTarget)
             ["gsky"] = "gunsky", ["gunsky"] = "gunsky",
             ["glk"] = "gunloopkill", ["gunloopkill"] = "gunloopkill",
             ["glkn"] = "gunloopknock", ["gunloopknock"] = "gunloopknock",
+            ["gak"] = "gunautokill", ["gunautokill"] = "gunautokill",
+            ["gakn"] = "gunautoknock", ["gunautoknock"] = "gunautoknock",
             -- Shared commands (mode-independent)
             ["d"] = "drop", ["drop"] = "drop",
             ["o"] = "owner", ["owner"] = "owner",
             ["u"] = "unsummon", ["unsummon"] = "unsummon", ["desummon"] = "unsummon",
             ["dis"] = "disable", ["disable"] = "disable",
             ["summon"] = "summon",
-            ["spam"] = "spam",
-            ["loopspam"] = "loopspam",
             ["snipe"] = "snipe",
             ["protect"] = "protect",
             ["gunprotect"] = "gunprotect", ["gp"] = "gunprotect",
@@ -1641,7 +1937,21 @@ local function InitializeBot(workerTarget, masterTarget)
             ["autosafeadd"] = "autosafeadd", ["asa"] = "autosafeadd",
             ["autosaferemove"] = "autosaferemove", ["asr"] = "autosaferemove",
             ["autosafelist"] = "autosafelist", ["asl"] = "autosafelist",
-            ["buygun"] = "buygun"
+            ["getaug"] = "getaug",
+            ["getrifle"] = "getrifle",
+            ["getmask"] = "getmask",
+            ["aura"] = "aura",
+            ["gunaura"] = "gunaura", ["ga"] = "gunaura",
+            ["tp"] = "tp",
+            ["guntp"] = "guntp", ["gtp"] = "guntp",
+            ["message"] = "message", ["msg"] = "message",
+            ["leave"] = "leave",
+            ["unprotect"] = "unprotect",
+            ["ungunprotect"] = "ungunprotect", ["ungp"] = "ungunprotect",
+            ["unaura"] = "unaura",
+            ["ungunaura"] = "ungunaura", ["unga"] = "ungunaura",
+            ["whitelist"] = "whitelist", ["wl"] = "whitelist",
+            ["unwhitelist"] = "unwhitelist", ["unwl"] = "unwhitelist"
         }
         
         local cmd = cmdMap[rawCmd] or rawCmd
@@ -1715,6 +2025,88 @@ local function InitializeBot(workerTarget, masterTarget)
             return
         end
 
+        if cmd == "aura" then
+            auraEnabled = not auraEnabled
+            if auraEnabled then auraCombatMode = "fist" end
+            print("Aura (fist) toggled to: " .. tostring(auraEnabled))
+            return
+        end
+
+        if cmd == "gunaura" then
+            auraEnabled = not auraEnabled
+            if auraEnabled then auraCombatMode = "gun" end
+            print("Aura (gun) toggled to: " .. tostring(auraEnabled))
+            return
+        end
+
+        if cmd == "unprotect" then
+            protectEnabled = false
+            print("Protection (fist) disabled")
+            return
+        end
+
+        if cmd == "ungunprotect" then
+            protectEnabled = false
+            print("Protection (gun) disabled")
+            return
+        end
+
+        if cmd == "unaura" then
+            auraEnabled = false
+            print("Aura (fist) disabled")
+            return
+        end
+
+        if cmd == "ungunaura" then
+            auraEnabled = false
+            print("Aura (gun) disabled")
+            return
+        end
+
+        if cmd == "whitelist" and args[2] then
+            local clean = msg:sub(args[1]:len() + 2):gsub("^%s*(.-)%s*$", "%1")
+            -- Check if already whitelisted
+            for _, name in ipairs(commandWhitelist) do
+                if name:lower() == clean:lower() then
+                    print("[Whitelist] " .. clean .. " is already whitelisted")
+                    return
+                end
+            end
+            -- Find the player's actual name
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():find(clean:lower()) or p.DisplayName:lower():find(clean:lower()) then
+                    table.insert(commandWhitelist, p.Name)
+                    print("[Whitelist] Added " .. p.Name)
+                    return
+                end
+            end
+            -- If not found in server, add raw name
+            table.insert(commandWhitelist, clean)
+            print("[Whitelist] Added " .. clean)
+            return
+        end
+
+        if cmd == "unwhitelist" and args[2] then
+            local clean = msg:sub(args[1]:len() + 2):gsub("^%s*(.-)%s*$", "%1")
+            for i, name in ipairs(commandWhitelist) do
+                if name:lower() == clean:lower() then
+                    table.remove(commandWhitelist, i)
+                    print("[Whitelist] Removed " .. clean)
+                    return
+                end
+            end
+            -- Try partial match
+            for i, name in ipairs(commandWhitelist) do
+                if name:lower():find(clean:lower()) then
+                    table.remove(commandWhitelist, i)
+                    print("[Whitelist] Removed " .. name)
+                    return
+                end
+            end
+            print("[Whitelist] " .. clean .. " was not whitelisted")
+            return
+        end
+
         if cmd == "autosafe" then
             autosafeEnabled = not autosafeEnabled
             print("Autosafe protocol status toggled to: " .. tostring(autosafeEnabled))
@@ -1757,39 +2149,237 @@ local function InitializeBot(workerTarget, masterTarget)
             return
         end
 
-        if cmd == "buygun" then
+        if cmd == "getaug" then
             task.spawn(function()
                 local char = worker.Character
                 local root = char and char:FindFirstChild("HumanoidRootPart")
                 if not root then return end
-                local GUN_SHOP_POS = Vector3.new(-275, 52, -218)
-                
-                -- Set mode so the main loop doesn't override position
                 mode = "BuyGun"
                 clearPhysics(root)
-                applySmartNoclip(true)
-                
-                -- Stay at gun shop for 10 seconds
+                applySmartNoclip(false)
                 local stayStart = tick()
                 while tick() - stayStart < 10 do
                     if not scriptRunning or commandCancelled then break end
-                    root.CFrame = CFrame.new(GUN_SHOP_POS)
+                    root.CFrame = CFrame.new(-276, 52, -218)
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
                     RunService.RenderStepped:Wait()
                 end
-                
-                -- Return to idle
+                applySmartNoclip(true)
                 mode = "Idle"
                 CombatExitTeleport()
             end)
             return
         end
 
-        if cmd == "summon" or cmd == "unsummon" or cmd == "drop" or cmd == "spam" or cmd == "loopspam" then
-            if cmd == "spam" or cmd == "loopspam" then
-                commandCancelled = true
+        if cmd == "getrifle" then
+            task.spawn(function()
+                local char = worker.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+                mode = "BuyGun"
+                clearPhysics(root)
+                applySmartNoclip(false)
+                local stayStart = tick()
+                while tick() - stayStart < 10 do
+                    if not scriptRunning or commandCancelled then break end
+                    root.CFrame = CFrame.new(-257, 52, -218)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    RunService.RenderStepped:Wait()
+                end
+                applySmartNoclip(true)
+                mode = "Idle"
+                CombatExitTeleport()
+            end)
+            return
+        end
+
+        if cmd == "getmask" then
+            task.spawn(function()
+                local char = worker.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+                mode = "BuyGun"
+                clearPhysics(root)
+                applySmartNoclip(false)
+                local stayStart = tick()
+                while tick() - stayStart < 3 do
+                    if not scriptRunning or commandCancelled then break end
+                    root.CFrame = CFrame.new(-272, 22, -279)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    RunService.RenderStepped:Wait()
+                end
+                applySmartNoclip(true)
+                
+                -- Find mask in inventory and equip it
+                task.wait(0.3)
+                local mask = nil
+                for _, item in ipairs(worker.Backpack:GetChildren()) do
+                    if item:IsA("Tool") and (item.Name:lower():find("mask") or item.Name:lower():find("ski")) then
+                        mask = item
+                        break
+                    end
+                end
+                if not mask then
+                    for _, item in ipairs(char:GetChildren()) do
+                        if item:IsA("Tool") and (item.Name:lower():find("mask") or item.Name:lower():find("ski")) then
+                            mask = item
+                            break
+                        end
+                    end
+                end
+                if mask then
+                    mask.Parent = char
+                    task.wait(0.2)
+                    -- Click to put mask on
+                    VirtualInputManager:SendMouseButtonEvent(400, 400, 0, true, game, 1)
+                    task.wait(0.1)
+                    VirtualInputManager:SendMouseButtonEvent(400, 400, 0, false, game, 1)
+                    task.wait(0.5)
+                    -- Unequip mask
+                    mask.Parent = worker.Backpack
+                    task.wait(0.1)
+                end
+                
+                mode = "Idle"
+                CombatExitTeleport()
+            end)
+            return
+        end
+
+        if cmd == "message" and args[2] then
+            local message = msg:sub(args[1]:len() + 2)
+            task.spawn(function()
+                local channels = TextChatService:FindFirstChild("TextChannels")
+                if channels then
+                    local rbxGeneral = channels:FindFirstChild("RBXGeneral")
+                    if rbxGeneral then
+                        rbxGeneral:SendAsync(message)
+                    end
+                end
+            end)
+            return
+        end
+
+        if cmd == "leave" then
+            game:GetService("TeleportService"):Teleport(game.PlaceId, worker)
+            return
+        end
+
+        -- TP command: tp (player1) (player2) — knock player1 and bring them to player2
+        if (cmd == "tp" or cmd == "guntp") and args[2] and args[3] then
+            commandCancelled = false
+            commandBlacklist = {}
+            targetQueue = {}
+            
+            if cmd == "guntp" then
+                combatMode = "gun"
+            else
+                combatMode = "fist"
             end
+            
+            -- Find player1 (target to knock)
+            local target1 = nil
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():find(args[2]:lower()) or p.DisplayName:lower():find(args[2]:lower()) then
+                    target1 = p
+                    break
+                end
+            end
+            
+            -- Find player2 (destination player)
+            local target2 = nil
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():find(args[3]:lower()) or p.DisplayName:lower():find(args[3]:lower()) then
+                    target2 = p
+                    break
+                end
+            end
+            
+            if target1 and target2 then
+                task.spawn(function()
+                    local char = worker.Character
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not root then return end
+                    
+                    local targetChar = target1.Character
+                    local targetHum = targetChar and targetChar:FindFirstChild("Humanoid")
+                    
+                    -- Knock player1
+                    if targetHum and targetHum.Health > 0 and not isRagdolled(targetChar) then
+                        isAttacking = false
+                        alreadyAttempted = false
+                        performKnock(target1.Character, false)
+                    end
+                    
+                    if commandCancelled or not scriptRunning then return end
+                    task.wait(0.5)
+                    targetChar = target1.Character
+                    if not targetChar then return end
+                    
+                    -- Pick up player1 and bring to player2
+                    if target1.Character and scriptRunning then
+                        isAttacking = false
+                        mode = "Waiting"
+                        instantHardSnap(root, CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z))
+                        task.wait(0.5)
+                        
+                        if target1.Character and target1.Character:FindFirstChild("HumanoidRootPart") then
+                            isDescending = true
+                            clearPhysics(root)
+                            applySmartNoclip(false)
+                            
+                            local grabStart = tick()
+                            while tick() - grabStart < 0.8 do
+                                if not scriptRunning or mode ~= "Waiting" then break end
+                                local targetPartLoop = target1.Character:FindFirstChild("UpperTorso") or target1.Character:FindFirstChild("Torso") or target1.Character:FindFirstChild("HumanoidRootPart")
+                                if targetPartLoop then
+                                    root.CFrame = CFrame.new(targetPartLoop.Position + Vector3.new(0, 0.8, 0))
+                                    root.AssemblyLinearVelocity = Vector3.zero
+                                end
+                                RunService.RenderStepped:Wait()
+                            end
+                            
+                            if mode == "Waiting" then
+                                for i = 1, 3 do
+                                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                                    task.wait(0.05)
+                                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                                    task.wait(0.05)
+                                end
+                                task.wait(0.2)
+                                
+                                -- Deliver to player2's position
+                                local deliverStart = tick()
+                                while tick() - deliverStart < 0.8 do
+                                    if not scriptRunning then break end
+                                    local t2Char = target2.Character
+                                    local t2Root = t2Char and t2Char:FindFirstChild("HumanoidRootPart")
+                                    if t2Root then
+                                        forceUpright(root)
+                                        root.CFrame = t2Root.CFrame * CFrame.new(1.5, 0.5, 2.5)
+                                        root.AssemblyLinearVelocity = Vector3.zero
+                                    end
+                                    RunService.RenderStepped:Wait()
+                                end
+                                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+                                task.wait(0.1)
+                                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+                            end
+                        end
+                    end
+                    isDescending = false
+                    applySmartNoclip(true)
+                    mode = "Idle"
+                    CombatExitTeleport()
+                end)
+            end
+            return
+        end
+
+        if cmd == "summon" or cmd == "unsummon" or cmd == "drop" then
             targetQueue = {}
             targetPlayer = nil
             isAttacking = false
@@ -1800,12 +2390,14 @@ local function InitializeBot(workerTarget, masterTarget)
         -- All combat commands (fist and gun variants)
         local combatCommands = {
             ["kill"] = true, ["knock"] = true, ["bring"] = true, ["void"] = true,
-            ["safe"] = true, ["hold"] = true, ["sky"] = true, ["spam"] = true,
-            ["loopspam"] = true, ["snipe"] = true, ["autosafe"] = true,
+            ["safe"] = true, ["hold"] = true, ["sky"] = true,
+            ["snipe"] = true, ["autosafe"] = true,
             ["loopkill"] = true, ["loopknock"] = true,
+            ["autokill"] = true, ["autoknock"] = true,
             ["gunkill"] = true, ["gunknock"] = true, ["gunbring"] = true, ["gunvoid"] = true,
             ["gunsafe"] = true, ["gunhold"] = true, ["gunsky"] = true,
-            ["gunloopkill"] = true, ["gunloopknock"] = true
+            ["gunloopkill"] = true, ["gunloopknock"] = true,
+            ["gunautokill"] = true, ["gunautoknock"] = true
         }
 
         if combatCommands[cmd] then
@@ -1926,9 +2518,11 @@ local function InitializeBot(workerTarget, masterTarget)
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
             end
-        elseif (mode == "Idle" or mode == "Waiting") then
-            local jitterOffset = (math.floor(tick() * 20) % 2 == 0) and 4 or -4
-            root.CFrame = CFrame.new(root.Position.X + jitterOffset, FLY_HEIGHT, root.Position.Z)
+        elseif (mode == "Idle" or mode == "Waiting") and not isAttacking then
+            -- TP to random positions in the sky really fast
+            local randX = math.random(-500, 500)
+            local randZ = math.random(-500, 500)
+            root.CFrame = CFrame.new(randX, FLY_HEIGHT, randZ)
             root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end
