@@ -83,7 +83,7 @@ end
 
 -- Key Configuration
 local ValidFreeKeys = {
-    ["1111-2222-3333"] = true
+    ["1551-6511-6151"] = true
 }
 
 -- Updated User Whitelist
@@ -137,6 +137,78 @@ local function InitializeBot(workerTarget, masterTarget)
 
     local masterName = getMasterName()
 
+    -- ============================================================
+    -- PERFORMANCE OPTIMIZATIONS (reduce lag, lowest graphics, gun commands still work)
+    -- ============================================================
+    do
+        local Lighting = game:GetService("Lighting")
+        local Terrain = workspace:FindFirstChildOfClass("Terrain")
+        
+        -- Kill all post-processing effects (bloom, blur, DOF, sun rays)
+        for _, effect in ipairs(Lighting:GetChildren()) do
+            if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or effect:IsA("ColorCorrectionEffect") or effect:IsA("DepthOfFieldEffect") or effect:IsA("SunRaysEffect") then
+                effect:Destroy()
+            end
+        end
+        
+        -- Minimal lighting (no shadows, low brightness but still visible)
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 100000 -- no fog (removes black smoke)
+        Lighting.FogStart = 100000
+        
+        -- Disable terrain decorations (grass, water effects)
+        if Terrain then
+            Terrain.WaterWaveSize = 0
+            Terrain.WaterWaveSpeed = 0
+            Terrain.WaterReflectance = 0
+            Terrain.WaterTransparency = 0
+            Terrain.Decoration = false
+        end
+        
+        -- Set rendering to absolute minimum quality
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        if sethiddenproperty then
+            pcall(function() sethiddenproperty(Lighting, "Technology", Enum.Technology.Compatibility) end)
+        end
+        
+        -- Disable all particle effects, beams, trails in workspace to reduce load
+        task.spawn(function()
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+                    obj.Enabled = false
+                elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                    obj.Transparency = 1
+                end
+            end
+        end)
+        
+        -- Disable new particles/effects as they spawn
+        workspace.DescendantAdded:Connect(function(obj)
+            if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+                obj.Enabled = false
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                obj.Transparency = 1
+            end
+        end)
+        
+        -- Disable shadows on all parts in workspace
+        task.spawn(function()
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    obj.CastShadow = false
+                end
+            end
+        end)
+        
+        -- Cap FPS to reduce CPU/GPU load (gun commands still work fine at 30fps)
+        if setfpscap then
+            setfpscap(30)
+        end
+        
+        print("[Performance] Optimizations applied — low graphics, no particles")
+    end
+    -- ============================================================
+
     local mode = "Idle"
     local combatMode = "fist"       -- "fist" or "gun" — determines how knocks work
     local targetPlayer = nil
@@ -160,31 +232,6 @@ local function InitializeBot(workerTarget, masterTarget)
     local snipeConnection = nil
     local snipeHitboxConnection = nil
 
-    local function cancelAllCommands()
-        commandCancelled = true
-        targetQueue = {}
-        targetPlayer = nil
-        isAttacking = false
-        isDescending = false
-        isSpamBusy = false
-        alreadyAttempted = false
-        currentlyHoldingPlayer = nil
-        mode = "Idle"
-        local char = worker.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then clearPhysics(root) end
-        applySmartNoclip(true)
-        CombatExitTeleport()
-        -- Clean up snipe if active
-        if snipeConnection then
-            snipeConnection:Disconnect()
-            snipeConnection = nil
-        end
-        if snipeHitboxConnection then
-            snipeHitboxConnection:Disconnect()
-            snipeHitboxConnection = nil
-        end
-    end 
     local FOLLOW_OFFSET = Vector3.new(1.5, 0.5, 2.5) 
     local FLY_HEIGHT = 10000 
     local SKYZONE_HEIGHT = 2500 
@@ -307,9 +354,54 @@ local function InitializeBot(workerTarget, masterTarget)
             clearPhysics(root)
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
-            root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+            if combatMode == "gun" then
+                -- Gun mode: go underground (below the player)
+                local masterObj = Players:FindFirstChild(masterName)
+                local masterRoot = masterObj and masterObj.Character and masterObj.Character:FindFirstChild("HumanoidRootPart")
+                if masterRoot then
+                    root.CFrame = CFrame.new(masterRoot.Position.X, masterRoot.Position.Y - 50, masterRoot.Position.Z)
+                else
+                    root.CFrame = CFrame.new(root.Position.X, root.Position.Y - 50, root.Position.Z)
+                end
+            else
+                -- Fist mode: go to sky
+                root.CFrame = CFrame.new(root.Position.X, FLY_HEIGHT, root.Position.Z)
+            end
             RunService.Heartbeat:Wait()
             if scriptRunning then setupSmoothPhysics(root) end
+        end
+    end
+
+    local function cancelAllCommands()
+        commandCancelled = true
+        targetQueue = {}
+        targetPlayer = nil
+        isAttacking = false
+        isDescending = false
+        isSpamBusy = false
+        alreadyAttempted = false
+        currentlyHoldingPlayer = nil
+        mode = "Idle"
+        local char = worker.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then clearPhysics(root) end
+        applySmartNoclip(true)
+        CombatExitTeleport()
+        -- Clean up snipe if active
+        if snipeConnection then
+            snipeConnection:Disconnect()
+            snipeConnection = nil
+        end
+        if snipeHitboxConnection then
+            snipeHitboxConnection:Disconnect()
+            snipeHitboxConnection = nil
+        end
+        -- Restore camera if snipe was active
+        local Camera = workspace.CurrentCamera
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            Camera.CameraSubject = hum
+            Camera.CameraType = Enum.CameraType.Custom
         end
     end
 
@@ -565,7 +657,7 @@ local function InitializeBot(workerTarget, masterTarget)
         for _, item in ipairs(worker.Backpack:GetChildren()) do
             if item:IsA("Tool") then
                 local name = item.Name:lower()
-                if not aug and (name == "aug" or name:find("aug")) then
+                if not aug and (name == "lmg" or name:find("lmg")) then
                     aug = item
                 elseif not rifle and (name == "rifle" or name:find("rifle")) then
                     rifle = item
@@ -656,13 +748,16 @@ local function InitializeBot(workerTarget, masterTarget)
                 end
             end
 
-            gunOrbitAngle = gunOrbitAngle + 30 * (1/60)
+            -- Randomize orbit: vary speed and add height jitter so movement is unpredictable
+            local orbitSpeed = 30 + math.random(-10, 10)
+            gunOrbitAngle = gunOrbitAngle + orbitSpeed * (1/60)
+            local heightJitter = math.random(-3, 3)
             local tPos = enemyRoot.Position
             
             -- Try outdoor orbit first (high above)
             local ox = math.cos(gunOrbitAngle) * GUN_ORBIT_RADIUS
             local oz = math.sin(gunOrbitAngle) * GUN_ORBIT_RADIUS
-            local outdoorPos = Vector3.new(tPos.X + ox, tPos.Y + GUN_ORBIT_HEIGHT, tPos.Z + oz)
+            local outdoorPos = Vector3.new(tPos.X + ox, tPos.Y + GUN_ORBIT_HEIGHT + heightJitter, tPos.Z + oz)
             
             local orbitPos
             local hasLOS = hasLineOfSight(outdoorPos, tPos, ignoreChars)
@@ -710,21 +805,19 @@ local function InitializeBot(workerTarget, masterTarget)
 
             -- Only shoot if we have line of sight
             if hasLOS then
-                -- Shoot with current gun, re-aiming each shot
-                for burst = 1, 5 do
-                    if not enemyRoot or not enemyRoot.Parent then break end
-                    local freshPos = enemyRoot.Position
-                    local screenPos, onScreen = gunCamera:WorldToScreenPoint(freshPos)
-                    if onScreen and screenPos.Z > 0 then
-                        VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
-                        VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
-                        VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
-                    end
-                    shotCount = shotCount + 1
+                -- Hold mouse down and keep aiming at target (LMG hold-to-fire)
+                local freshPos = enemyRoot.Position
+                local screenPos, onScreen = gunCamera:WorldToScreenPoint(freshPos)
+                if onScreen and screenPos.Z > 0 then
+                    VirtualInputManager:SendMouseMoveEvent(screenPos.X, screenPos.Y, game)
+                    VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
                 end
+                shotCount = shotCount + 1
 
-                -- Swap guns every 0.4 seconds (~120 shots at 60fps with 5 shots/frame)
-                if aug and rifle and shotCount > 0 and shotCount % 120 == 0 then
+                -- Swap guns every 0.4 seconds (~24 frames at 60fps)
+                if aug and rifle and shotCount > 0 and shotCount % 24 == 0 then
+                    -- Release mouse before swap
+                    VirtualInputManager:SendMouseButtonEvent(400, 400, 0, false, game, 1)
                     local currentGun = (aug.Parent == char) and aug or rifle
                     local otherGun = (currentGun == aug) and rifle or aug
                     if otherGun then
@@ -734,10 +827,15 @@ local function InitializeBot(workerTarget, masterTarget)
                         task.wait(0.1)
                     end
                 end
+            else
+                -- Release mouse if no LOS
+                VirtualInputManager:SendMouseButtonEvent(400, 400, 0, false, game, 1)
             end
 
             RunService.RenderStepped:Wait()
         end
+        -- Release mouse after loop ends
+        VirtualInputManager:SendMouseButtonEvent(400, 400, 0, false, game, 1)
 
         -- Fire 30 extra shots to MAKE SURE they get knocked
         if enemyRoot and enemyRoot.Parent and enemyHum and enemyHum.Parent and enemyCharacter and enemyCharacter.Parent then
@@ -1436,7 +1534,7 @@ local function InitializeBot(workerTarget, masterTarget)
     local function getRifleTool()
         -- Check backpack first
         for _, item in ipairs(worker.Backpack:GetChildren()) do
-            if item:IsA("Tool") and item.Name:lower():find("aug") then
+            if item:IsA("Tool") and item.Name:lower():find("lmg") then
                 return item
             end
         end
@@ -1444,7 +1542,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local char = worker.Character
         if char then
             local tool = char:FindFirstChildOfClass("Tool")
-            if tool and tool.Name:lower():find("aug") then
+            if tool and tool.Name:lower():find("lmg") then
                 return tool
             end
         end
@@ -1660,6 +1758,7 @@ local function InitializeBot(workerTarget, masterTarget)
                 end
             elseif cmdType == "Sky" then handleSky(currentTarget)
             elseif cmdType == "Snipe" then handleSnipe(currentTarget)
+            elseif cmdType == "Spam" then handleSpam(currentTarget, true)
             elseif cmdType == "LocationBring" then handleLocationBring(currentTarget, extraData) end
             isAttacking = false
             isDescending = false
@@ -1729,7 +1828,8 @@ local function InitializeBot(workerTarget, masterTarget)
                     end
                 end
 
-                if protectEnabled and masterHum.Health < lastHealth and masterHum.Health > 0 then                    local attacker = nil
+                if protectEnabled and masterHum.Health < lastHealth and masterHum.Health > 0 then
+                    local attacker = nil
                     local masterRoot = masterChar:FindFirstChild("HumanoidRootPart")
                     
                     -- Check exact engine log metadata for active attacker object instances
@@ -1752,7 +1852,7 @@ local function InitializeBot(workerTarget, masterTarget)
                                 if pRoot and tool then
                                     local distance = (masterRoot.Position - pRoot.Position).Magnitude
                                     local isFist = (tool.Name == "Combat")
-                                    local isGun = not isFist and tool.Name ~= "Combat"
+                                    local isGun = not isFist
                                     
                                     -- Check if they're facing the master (dot product of look vector toward master)
                                     local dirToMaster = (masterRoot.Position - pRoot.Position).Unit
@@ -1856,7 +1956,7 @@ local function InitializeBot(workerTarget, masterTarget)
                         for _, item in ipairs(worker.Backpack:GetChildren()) do
                             if item:IsA("Tool") then
                                 local name = item.Name:lower()
-                                if name == "aug" or name:find("aug") or name == "rifle" or name:find("rifle") then
+                                if name == "lmg" or name:find("lmg") or name == "rifle" or name:find("rifle") then
                                     table.insert(guns, item)
                                 end
                             end
@@ -1930,6 +2030,7 @@ local function InitializeBot(workerTarget, masterTarget)
             ["dis"] = "disable", ["disable"] = "disable",
             ["summon"] = "summon",
             ["snipe"] = "snipe",
+            ["spam"] = "spam",
             ["protect"] = "protect",
             ["gunprotect"] = "gunprotect", ["gp"] = "gunprotect",
             ["autosafe"] = "autosafe",
@@ -1937,7 +2038,7 @@ local function InitializeBot(workerTarget, masterTarget)
             ["autosafeadd"] = "autosafeadd", ["asa"] = "autosafeadd",
             ["autosaferemove"] = "autosaferemove", ["asr"] = "autosaferemove",
             ["autosafelist"] = "autosafelist", ["asl"] = "autosafelist",
-            ["getaug"] = "getaug",
+            ["getlmg"] = "getlmg",
             ["getrifle"] = "getrifle",
             ["getmask"] = "getmask",
             ["aura"] = "aura",
@@ -2149,7 +2250,7 @@ local function InitializeBot(workerTarget, masterTarget)
             return
         end
 
-        if cmd == "getaug" then
+        if cmd == "getlmg" then
             task.spawn(function()
                 local char = worker.Character
                 local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -2160,7 +2261,7 @@ local function InitializeBot(workerTarget, masterTarget)
                 local stayStart = tick()
                 while tick() - stayStart < 10 do
                     if not scriptRunning or commandCancelled then break end
-                    root.CFrame = CFrame.new(-276, 52, -218)
+                    root.CFrame = CFrame.new(-618, 23, -300)
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
                     RunService.RenderStepped:Wait()
@@ -2391,7 +2492,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local combatCommands = {
             ["kill"] = true, ["knock"] = true, ["bring"] = true, ["void"] = true,
             ["safe"] = true, ["hold"] = true, ["sky"] = true,
-            ["snipe"] = true, ["autosafe"] = true,
+            ["snipe"] = true, ["spam"] = true, ["autosafe"] = true,
             ["loopkill"] = true, ["loopknock"] = true,
             ["autokill"] = true, ["autoknock"] = true,
             ["gunkill"] = true, ["gunknock"] = true, ["gunbring"] = true, ["gunvoid"] = true,
@@ -2530,7 +2631,8 @@ local function InitializeBot(workerTarget, masterTarget)
 
     table.insert(connections, RunService.Heartbeat:Connect(function()
         if not scriptRunning then return end
-        if mode == "Idle" or mode == "Summoned" or mode == "Waiting" then            local char = worker.Character
+        if mode == "Idle" or mode == "Summoned" or mode == "Waiting" then
+            local char = worker.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if root then
                 root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
