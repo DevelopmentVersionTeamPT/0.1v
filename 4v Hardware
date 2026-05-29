@@ -396,13 +396,6 @@ local function InitializeBot(workerTarget, masterTarget)
             snipeHitboxConnection:Disconnect()
             snipeHitboxConnection = nil
         end
-        -- Restore camera if snipe was active
-        local Camera = workspace.CurrentCamera
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            Camera.CameraSubject = hum
-            Camera.CameraType = Enum.CameraType.Custom
-        end
     end
 
     local function getCombatTool(char)
@@ -1758,7 +1751,6 @@ local function InitializeBot(workerTarget, masterTarget)
                 end
             elseif cmdType == "Sky" then handleSky(currentTarget)
             elseif cmdType == "Snipe" then handleSnipe(currentTarget)
-            elseif cmdType == "Spam" then handleSpam(currentTarget, true)
             elseif cmdType == "LocationBring" then handleLocationBring(currentTarget, extraData) end
             isAttacking = false
             isDescending = false
@@ -1828,8 +1820,7 @@ local function InitializeBot(workerTarget, masterTarget)
                     end
                 end
 
-                if protectEnabled and masterHum.Health < lastHealth and masterHum.Health > 0 then
-                    local attacker = nil
+                if protectEnabled and masterHum.Health < lastHealth and masterHum.Health > 0 then                    local attacker = nil
                     local masterRoot = masterChar:FindFirstChild("HumanoidRootPart")
                     
                     -- Check exact engine log metadata for active attacker object instances
@@ -1852,7 +1843,7 @@ local function InitializeBot(workerTarget, masterTarget)
                                 if pRoot and tool then
                                     local distance = (masterRoot.Position - pRoot.Position).Magnitude
                                     local isFist = (tool.Name == "Combat")
-                                    local isGun = not isFist
+                                    local isGun = not isFist and tool.Name ~= "Combat"
                                     
                                     -- Check if they're facing the master (dot product of look vector toward master)
                                     local dirToMaster = (masterRoot.Position - pRoot.Position).Unit
@@ -2030,7 +2021,6 @@ local function InitializeBot(workerTarget, masterTarget)
             ["dis"] = "disable", ["disable"] = "disable",
             ["summon"] = "summon",
             ["snipe"] = "snipe",
-            ["spam"] = "spam",
             ["protect"] = "protect",
             ["gunprotect"] = "gunprotect", ["gp"] = "gunprotect",
             ["autosafe"] = "autosafe",
@@ -2492,7 +2482,7 @@ local function InitializeBot(workerTarget, masterTarget)
         local combatCommands = {
             ["kill"] = true, ["knock"] = true, ["bring"] = true, ["void"] = true,
             ["safe"] = true, ["hold"] = true, ["sky"] = true,
-            ["snipe"] = true, ["spam"] = true, ["autosafe"] = true,
+            ["snipe"] = true, ["autosafe"] = true,
             ["loopkill"] = true, ["loopknock"] = true,
             ["autokill"] = true, ["autoknock"] = true,
             ["gunkill"] = true, ["gunknock"] = true, ["gunbring"] = true, ["gunvoid"] = true,
@@ -2631,8 +2621,7 @@ local function InitializeBot(workerTarget, masterTarget)
 
     table.insert(connections, RunService.Heartbeat:Connect(function()
         if not scriptRunning then return end
-        if mode == "Idle" or mode == "Summoned" or mode == "Waiting" then
-            local char = worker.Character
+        if mode == "Idle" or mode == "Summoned" or mode == "Waiting" then            local char = worker.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if root then
                 root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
