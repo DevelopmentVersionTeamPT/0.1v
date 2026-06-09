@@ -1,0 +1,1165 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+if CoreGui:FindFirstChild("VoidLockUI") then
+    CoreGui:FindFirstChild("VoidLockUI"):Destroy()
+end
+
+local camLockEnabled = false
+local hitboxEnabled = false
+local hitboxVisible = false
+local hitboxShape = "Box" -- "Box", "Sphere", "Cylinder"
+local targetMode = "Head" -- "Head" or "Torso"
+local lockedTarget = nil
+local HITBOX_SIZE = Vector3.new(6, 6, 6)
+local LOCK_KEYBIND = Enum.KeyCode.Q
+local waitingForKeybind = false
+local connections = {}
+local scriptActive = true
+
+local espEnabled = false
+local espNameMode = "Username" -- "Username" or "Display"
+local espHealthEnabled = false
+local highlightEnabled = false
+local highlightColor = Color3.fromRGB(255, 255, 255)
+local espHealthColor = Color3.fromRGB(180, 255, 180)
+local espObjects = {}
+local chamsEnabled = false
+local chamsColor = Color3.fromRGB(255, 50, 50)
+local skeletonEnabled = false
+local distanceEnabled = false
+local rainbowTrailEnabled = false
+
+local fullbrightEnabled = false
+local noFogEnabled = false
+local ambientColor = "Default"
+local originalLighting = {}
+
+local themes = {
+    Dark = {
+        bg = Color3.fromRGB(15, 15, 17),
+        card = Color3.fromRGB(22, 22, 24),
+        border = Color3.fromRGB(38, 38, 40),
+        button = Color3.fromRGB(50, 50, 53),
+        text = Color3.fromRGB(255, 255, 255),
+        accent = Color3.fromRGB(50, 50, 53),
+        tabActive = Color3.fromRGB(50, 50, 53),
+        tabInactive = Color3.fromRGB(22, 22, 24),
+    },
+    Light = {
+        bg = Color3.fromRGB(235, 235, 240),
+        card = Color3.fromRGB(255, 255, 255),
+        border = Color3.fromRGB(200, 200, 205),
+        button = Color3.fromRGB(220, 220, 225),
+        text = Color3.fromRGB(20, 20, 25),
+        accent = Color3.fromRGB(200, 200, 210),
+        tabActive = Color3.fromRGB(200, 200, 210),
+        tabInactive = Color3.fromRGB(240, 240, 245),
+    },
+    Red = {
+        bg = Color3.fromRGB(20, 10, 12),
+        card = Color3.fromRGB(35, 15, 18),
+        border = Color3.fromRGB(80, 25, 30),
+        button = Color3.fromRGB(120, 30, 35),
+        text = Color3.fromRGB(255, 220, 220),
+        accent = Color3.fromRGB(160, 40, 45),
+        tabActive = Color3.fromRGB(120, 30, 35),
+        tabInactive = Color3.fromRGB(35, 15, 18),
+    },
+    Blue = {
+        bg = Color3.fromRGB(10, 14, 22),
+        card = Color3.fromRGB(15, 22, 38),
+        border = Color3.fromRGB(30, 50, 90),
+        button = Color3.fromRGB(30, 60, 130),
+        text = Color3.fromRGB(210, 230, 255),
+        accent = Color3.fromRGB(40, 80, 170),
+        tabActive = Color3.fromRGB(30, 60, 130),
+        tabInactive = Color3.fromRGB(15, 22, 38),
+    },
+    Purple = {
+        bg = Color3.fromRGB(16, 10, 22),
+        card = Color3.fromRGB(28, 18, 40),
+        border = Color3.fromRGB(60, 30, 90),
+        button = Color3.fromRGB(80, 35, 130),
+        text = Color3.fromRGB(230, 210, 255),
+        accent = Color3.fromRGB(110, 50, 170),
+        tabActive = Color3.fromRGB(80, 35, 130),
+        tabInactive = Color3.fromRGB(28, 18, 40),
+    },
+    Green = {
+        bg = Color3.fromRGB(10, 18, 12),
+        card = Color3.fromRGB(15, 30, 18),
+        border = Color3.fromRGB(30, 70, 35),
+        button = Color3.fromRGB(30, 100, 40),
+        text = Color3.fromRGB(210, 255, 220),
+        accent = Color3.fromRGB(40, 130, 50),
+        tabActive = Color3.fromRGB(30, 100, 40),
+        tabInactive = Color3.fromRGB(15, 30, 18),
+    },
+}
+local currentTheme = "Dark"
+local themedElements = {}
+
+local ScreenGui = Instance.new("ScreenGui", CoreGui)
+ScreenGui.Name = "VoidLockUI"
+ScreenGui.ResetOnSpawn = false
+
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
+MainFrame.BorderSizePixel = 0
+MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+MainFrame.Size = UDim2.new(0, 360, 0, 360)
+MainFrame.Active = true
+MainFrame.Draggable = true
+local mainCorner = Instance.new("UICorner", MainFrame)
+mainCorner.CornerRadius = UDim.new(0, 8)
+
+local Title = Instance.new("TextLabel", MainFrame)
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.new(0, 0, 0, 10)
+Title.Size = UDim2.new(1, 0, 0, 20)
+Title.Font = Enum.Font.GothamBold
+Title.Text = "Phoenix Hub"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 14
+Title.TextXAlignment = Enum.TextXAlignment.Center
+
+local CloseButton = Instance.new("TextButton", MainFrame)
+CloseButton.BackgroundTransparency = 1
+CloseButton.Position = UDim2.new(1, -26, 0, 8)
+CloseButton.Size = UDim2.new(0, 18, 0, 18)
+CloseButton.Font = Enum.Font.GothamBold
+CloseButton.Text = "x"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.TextSize = 13
+CloseButton.ZIndex = 2
+
+local TabBar = Instance.new("Frame", MainFrame)
+TabBar.BackgroundTransparency = 1
+TabBar.Position = UDim2.new(0, 0, 0, 35)
+TabBar.Size = UDim2.new(1, 0, 0, 28)
+
+local TabLayout = Instance.new("UIListLayout", TabBar)
+TabLayout.FillDirection = Enum.FillDirection.Horizontal
+TabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+TabLayout.Padding = UDim.new(0, 4)
+
+local ContentArea = Instance.new("Frame", MainFrame)
+ContentArea.BackgroundTransparency = 1
+ContentArea.Position = UDim2.new(0, 0, 0, 68)
+ContentArea.Size = UDim2.new(1, 0, 1, -68)
+
+local tabs = {}
+local tabButtons = {}
+local activeTab = nil
+
+local function applyTheme(themeName)
+    local t = themes[themeName]
+    if not t then return end
+    currentTheme = themeName
+    if MainFrame then MainFrame.BackgroundColor3 = t.bg end
+    if Title then Title.TextColor3 = t.text end
+    if CloseButton then CloseButton.TextColor3 = t.text end
+    if Sep then Sep.BackgroundColor3 = t.border end
+    for _, btn in pairs(tabButtons) do
+        if btn then btn.TextColor3 = t.text end
+    end
+    for _, elem in ipairs(themedElements) do
+        if elem.obj and elem.obj.Parent then
+            if elem.type == "container" then
+                elem.obj.BackgroundColor3 = t.card
+                elem.obj.BorderColor3 = t.border
+            elseif elem.type == "button" then
+                if elem.isToggle then
+                    if elem.obj.Text == "OFF" then
+                        elem.obj.BackgroundColor3 = t.button
+                    end
+                else
+                    elem.obj.BackgroundColor3 = t.button
+                end
+                elem.obj.TextColor3 = t.text
+            elseif elem.type == "label" then
+                elem.obj.TextColor3 = t.text
+            end
+        end
+    end
+    if activeTab then
+        for name, btn in pairs(tabButtons) do
+            if btn then
+                if name == activeTab then
+                    btn.BackgroundColor3 = t.tabActive
+                else
+                    btn.BackgroundColor3 = t.tabInactive
+                end
+            end
+        end
+    end
+end
+
+local function createTabButton(name)
+    local btn = Instance.new("TextButton", TabBar)
+    btn.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+    btn.BorderSizePixel = 0
+    btn.Size = UDim2.new(0, 70, 0, 24)
+    btn.Font = Enum.Font.GothamBold
+    btn.Text = name
+    btn.TextColor3 = Color3.fromRGB(140, 140, 140)
+    btn.TextSize = 10
+    local c = Instance.new("UICorner", btn)
+    c.CornerRadius = UDim.new(0, 4)
+    tabButtons[name] = btn
+    return btn
+end
+
+local function createTabContent()
+    local scroll = Instance.new("ScrollingFrame", ContentArea)
+    scroll.BackgroundTransparency = 1
+    scroll.Size = UDim2.new(1, 0, 1, 0)
+    scroll.Visible = false
+    scroll.ScrollBarThickness = 3
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 320)
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.BorderSizePixel = 0
+    return scroll
+end
+
+local function switchTab(name)
+    for tabName, frame in pairs(tabs) do
+        frame.Visible = (tabName == name)
+    end
+    local t = themes[currentTheme]
+    for tabName, btn in pairs(tabButtons) do
+        if tabName == name then
+            btn.BackgroundColor3 = t.tabActive
+            btn.TextColor3 = t.text
+        else
+            btn.BackgroundColor3 = t.tabInactive
+            btn.TextColor3 = Color3.fromRGB(140, 140, 140)
+        end
+    end
+    activeTab = name
+end
+
+local function CreateToggle(parent, yPos, label, default, callback)
+    local container = Instance.new("Frame", parent)
+    container.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+    container.BorderColor3 = Color3.fromRGB(38, 38, 40)
+    container.BorderSizePixel = 1
+    container.Position = UDim2.new(0.5, -130, 0, yPos)
+    container.Size = UDim2.new(0, 260, 0, 32)
+    local c = Instance.new("UICorner", container)
+    c.CornerRadius = UDim.new(0, 5)
+    table.insert(themedElements, {type = "container", obj = container})
+
+    local lbl = Instance.new("TextLabel", container)
+    lbl.BackgroundTransparency = 1
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.Size = UDim2.new(0.65, 0, 1, 0)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.Text = label
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    table.insert(themedElements, {type = "label", obj = lbl})
+
+    local btn = Instance.new("TextButton", container)
+    btn.BackgroundColor3 = default and Color3.fromRGB(35, 90, 35) or Color3.fromRGB(50, 50, 53)
+    btn.BorderSizePixel = 0
+    btn.Position = UDim2.new(1, -52, 0.5, -10)
+    btn.Size = UDim2.new(0, 42, 0, 20)
+    btn.Font = Enum.Font.GothamBold
+    btn.Text = default and "ON" or "OFF"
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 9
+    local bc = Instance.new("UICorner", btn)
+    bc.CornerRadius = UDim.new(0, 4)
+    table.insert(themedElements, {type = "button", obj = btn, isToggle = true})
+
+    local state = default
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        btn.Text = state and "ON" or "OFF"
+        local t = themes[currentTheme]
+        btn.BackgroundColor3 = state and Color3.fromRGB(35, 90, 35) or (t and t.button or Color3.fromRGB(50, 50, 53))
+        if callback then callback(state) end
+    end)
+    return btn
+end
+
+local function CreateCycle(parent, yPos, label, options, default, callback)
+    local container = Instance.new("Frame", parent)
+    container.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+    container.BorderColor3 = Color3.fromRGB(38, 38, 40)
+    container.BorderSizePixel = 1
+    container.Position = UDim2.new(0.5, -130, 0, yPos)
+    container.Size = UDim2.new(0, 260, 0, 32)
+    local c = Instance.new("UICorner", container)
+    c.CornerRadius = UDim.new(0, 5)
+    table.insert(themedElements, {type = "container", obj = container})
+
+    local lbl = Instance.new("TextLabel", container)
+    lbl.BackgroundTransparency = 1
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.Size = UDim2.new(0.55, 0, 1, 0)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.Text = label
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    table.insert(themedElements, {type = "label", obj = lbl})
+
+    local idx = 1
+    for i, v in ipairs(options) do
+        if v == default then idx = i break end
+    end
+
+    local btn = Instance.new("TextButton", container)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+    btn.BorderSizePixel = 0
+    btn.Position = UDim2.new(1, -65, 0.5, -10)
+    btn.Size = UDim2.new(0, 55, 0, 20)
+    btn.Font = Enum.Font.GothamBold
+    btn.Text = default
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 9
+    local bc = Instance.new("UICorner", btn)
+    bc.CornerRadius = UDim.new(0, 4)
+    table.insert(themedElements, {type = "button", obj = btn, isToggle = false})
+
+    btn.MouseButton1Click:Connect(function()
+        idx = idx % #options + 1
+        btn.Text = options[idx]
+        if callback then callback(options[idx]) end
+    end)
+    return btn
+end
+
+createTabButton("Camera")
+tabs["Camera"] = createTabContent()
+
+CreateToggle(tabs["Camera"], 5, "Camera Lock", false, function(state)
+    camLockEnabled = state
+    if not state then lockedTarget = nil end
+end)
+
+createTabButton("Hitbox")
+tabs["Hitbox"] = createTabContent()
+
+CreateToggle(tabs["Hitbox"], 5, "Hitbox Expander", false, function(state)
+    hitboxEnabled = state
+    if not state and lockedTarget and lockedTarget.Character then
+        local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.Size = Vector3.new(2, 2, 1)
+            root.Transparency = 1
+            root.Material = Enum.Material.SmoothPlastic
+        end
+    end
+end)
+
+CreateToggle(tabs["Hitbox"], 45, "Hitbox Visibility", false, function(state)
+    hitboxVisible = state
+    if not state and lockedTarget and lockedTarget.Character then
+        local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.Transparency = 1
+        end
+    end
+end)
+
+local transContainer = Instance.new("Frame", tabs["Hitbox"])
+transContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+transContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
+transContainer.BorderSizePixel = 1
+transContainer.Position = UDim2.new(0.5, -130, 0, 85)
+transContainer.Size = UDim2.new(0, 260, 0, 32)
+local tc = Instance.new("UICorner", transContainer)
+tc.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = transContainer})
+
+local transLbl = Instance.new("TextLabel", transContainer)
+transLbl.BackgroundTransparency = 1
+transLbl.Position = UDim2.new(0, 10, 0, 0)
+transLbl.Size = UDim2.new(0.45, 0, 1, 0)
+transLbl.Font = Enum.Font.GothamBold
+transLbl.Text = "Opacity"
+transLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+transLbl.TextSize = 11
+transLbl.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = transLbl})
+
+local transValue = Instance.new("TextLabel", transContainer)
+transValue.BackgroundTransparency = 1
+transValue.Position = UDim2.new(0.45, 0, 0, 0)
+transValue.Size = UDim2.new(0.2, 0, 1, 0)
+transValue.Font = Enum.Font.GothamBold
+transValue.Text = "3"
+transValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+transValue.TextSize = 11
+transValue.TextXAlignment = Enum.TextXAlignment.Center
+table.insert(themedElements, {type = "label", obj = transValue})
+
+local transMinus = Instance.new("TextButton", transContainer)
+transMinus.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+transMinus.BorderSizePixel = 0
+transMinus.Position = UDim2.new(1, -80, 0.5, -10)
+transMinus.Size = UDim2.new(0, 28, 0, 20)
+transMinus.Font = Enum.Font.GothamBold
+transMinus.Text = "-"
+transMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
+transMinus.TextSize = 12
+local tmc = Instance.new("UICorner", transMinus)
+tmc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = transMinus, isToggle = false})
+
+local transPlus = Instance.new("TextButton", transContainer)
+transPlus.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+transPlus.BorderSizePixel = 0
+transPlus.Position = UDim2.new(1, -42, 0.5, -10)
+transPlus.Size = UDim2.new(0, 28, 0, 20)
+transPlus.Font = Enum.Font.GothamBold
+transPlus.Text = "+"
+transPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
+transPlus.TextSize = 12
+local tpc = Instance.new("UICorner", transPlus)
+tpc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = transPlus, isToggle = false})
+
+local hitboxOpacity = 3
+
+transMinus.MouseButton1Click:Connect(function()
+    hitboxOpacity = math.max(0, hitboxOpacity - 1)
+    transValue.Text = tostring(hitboxOpacity)
+end)
+
+transPlus.MouseButton1Click:Connect(function()
+    hitboxOpacity = math.min(10, hitboxOpacity + 1)
+    transValue.Text = tostring(hitboxOpacity)
+end)
+
+local sizeContainer = Instance.new("Frame", tabs["Hitbox"])
+sizeContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+sizeContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
+sizeContainer.BorderSizePixel = 1
+sizeContainer.Position = UDim2.new(0.5, -130, 0, 125)
+sizeContainer.Size = UDim2.new(0, 260, 0, 32)
+local sc = Instance.new("UICorner", sizeContainer)
+sc.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = sizeContainer})
+
+local sizeLbl = Instance.new("TextLabel", sizeContainer)
+sizeLbl.BackgroundTransparency = 1
+sizeLbl.Position = UDim2.new(0, 10, 0, 0)
+sizeLbl.Size = UDim2.new(0.45, 0, 1, 0)
+sizeLbl.Font = Enum.Font.GothamBold
+sizeLbl.Text = "Size"
+sizeLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+sizeLbl.TextSize = 11
+sizeLbl.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = sizeLbl})
+
+local sizeValue = Instance.new("TextLabel", sizeContainer)
+sizeValue.BackgroundTransparency = 1
+sizeValue.Position = UDim2.new(0.45, 0, 0, 0)
+sizeValue.Size = UDim2.new(0.2, 0, 1, 0)
+sizeValue.Font = Enum.Font.GothamBold
+sizeValue.Text = "6"
+sizeValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+sizeValue.TextSize = 11
+sizeValue.TextXAlignment = Enum.TextXAlignment.Center
+table.insert(themedElements, {type = "label", obj = sizeValue})
+
+local minusBtn = Instance.new("TextButton", sizeContainer)
+minusBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+minusBtn.BorderSizePixel = 0
+minusBtn.Position = UDim2.new(1, -80, 0.5, -10)
+minusBtn.Size = UDim2.new(0, 28, 0, 20)
+minusBtn.Font = Enum.Font.GothamBold
+minusBtn.Text = "-"
+minusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+minusBtn.TextSize = 12
+local mc = Instance.new("UICorner", minusBtn)
+mc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = minusBtn, isToggle = false})
+
+local plusBtn = Instance.new("TextButton", sizeContainer)
+plusBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+plusBtn.BorderSizePixel = 0
+plusBtn.Position = UDim2.new(1, -42, 0.5, -10)
+plusBtn.Size = UDim2.new(0, 28, 0, 20)
+plusBtn.Font = Enum.Font.GothamBold
+plusBtn.Text = "+"
+plusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+plusBtn.TextSize = 12
+local pc = Instance.new("UICorner", plusBtn)
+pc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = plusBtn, isToggle = false})
+
+local currentSize = 6
+
+minusBtn.MouseButton1Click:Connect(function()
+    currentSize = math.max(2, currentSize - 1)
+    sizeValue.Text = tostring(currentSize)
+    HITBOX_SIZE = Vector3.new(currentSize, currentSize, currentSize)
+end)
+
+plusBtn.MouseButton1Click:Connect(function()
+    currentSize = math.min(20, currentSize + 1)
+    sizeValue.Text = tostring(currentSize)
+    HITBOX_SIZE = Vector3.new(currentSize, currentSize, currentSize)
+end)
+
+CreateCycle(tabs["Hitbox"], 165, "Shape", {"Box", "Sphere", "Cylinder"}, "Box", function(val)
+    hitboxShape = val
+end)
+
+local hitboxColor = Color3.fromRGB(40, 40, 42)
+CreateCycle(tabs["Hitbox"], 205, "Color", {"Dark Gray", "Red", "Blue", "Green", "Purple", "Black", "White"}, "Dark Gray", function(val)
+    local colors = {
+        ["Dark Gray"] = Color3.fromRGB(40, 40, 42),
+        Red = Color3.fromRGB(180, 30, 30),
+        Blue = Color3.fromRGB(30, 60, 180),
+        Green = Color3.fromRGB(30, 140, 30),
+        Purple = Color3.fromRGB(120, 30, 180),
+        Black = Color3.fromRGB(10, 10, 10),
+        White = Color3.fromRGB(220, 220, 220)
+    }
+    hitboxColor = colors[val] or Color3.fromRGB(40, 40, 42)
+end)
+
+createTabButton("Visuals")
+tabs["Visuals"] = createTabContent()
+
+CreateToggle(tabs["Visuals"], 5, "ESP", false, function(state)
+    espEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.billboard then obj.billboard:Destroy() end
+            if obj.highlight then obj.highlight:Destroy() end
+        end
+        espObjects = {}
+    end
+end)
+
+CreateCycle(tabs["Visuals"], 45, "Name Type", {"Username", "Display"}, "Username", function(val)
+    espNameMode = val
+end)
+
+CreateToggle(tabs["Visuals"], 85, "Show Health", false, function(state)
+    espHealthEnabled = state
+end)
+
+CreateCycle(tabs["Visuals"], 125, "Health Color", {"Green", "White", "Red", "Yellow", "Blue"}, "Green", function(val)
+    local colors = {
+        Green = Color3.fromRGB(180, 255, 180),
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 100, 100),
+        Yellow = Color3.fromRGB(255, 255, 100),
+        Blue = Color3.fromRGB(100, 180, 255)
+    }
+    espHealthColor = colors[val] or Color3.fromRGB(180, 255, 180)
+end)
+
+CreateToggle(tabs["Visuals"], 165, "Body Highlight", false, function(state)
+    highlightEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.highlight then obj.highlight:Destroy() obj.highlight = nil end
+        end
+    end
+end)
+
+local trailEnabled = false
+local trailColor = Color3.fromRGB(255, 255, 255)
+
+CreateToggle(tabs["Visuals"], 205, "Trail", false, function(state)
+    trailEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.trail then obj.trail:Destroy() obj.trail = nil end
+            if obj.trailAttach0 then obj.trailAttach0:Destroy() obj.trailAttach0 = nil end
+            if obj.trailAttach1 then obj.trailAttach1:Destroy() obj.trailAttach1 = nil end
+        end
+    end
+end)
+
+CreateCycle(tabs["Visuals"], 245, "Trail Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+    if val == "Rainbow" then
+        rainbowTrailEnabled = true
+    else
+        rainbowTrailEnabled = false
+        local colors = {
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 50, 50),
+            Green = Color3.fromRGB(50, 255, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Purple = Color3.fromRGB(180, 50, 255),
+            Yellow = Color3.fromRGB(255, 255, 50),
+            Pink = Color3.fromRGB(255, 100, 180)
+        }
+        trailColor = colors[val] or Color3.fromRGB(255, 255, 255)
+    end
+end)
+
+CreateCycle(tabs["Visuals"], 285, "Highlight Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow"}, "White", function(val)
+    local colors = {
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 50, 50),
+        Green = Color3.fromRGB(50, 255, 50),
+        Blue = Color3.fromRGB(50, 100, 255),
+        Purple = Color3.fromRGB(180, 50, 255),
+        Yellow = Color3.fromRGB(255, 255, 50)
+    }
+    highlightColor = colors[val] or Color3.fromRGB(255, 255, 255)
+end)
+
+CreateToggle(tabs["Visuals"], 325, "Chams", false, function(state)
+    chamsEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.chams then obj.chams:Destroy() obj.chams = nil end
+        end
+    end
+end)
+
+CreateCycle(tabs["Visuals"], 365, "Chams Color", {"Red", "Blue", "Green", "Purple", "White", "Yellow"}, "Red", function(val)
+    local colors = {
+        Red = Color3.fromRGB(255, 50, 50),
+        Blue = Color3.fromRGB(50, 100, 255),
+        Green = Color3.fromRGB(50, 255, 50),
+        Purple = Color3.fromRGB(180, 50, 255),
+        White = Color3.fromRGB(255, 255, 255),
+        Yellow = Color3.fromRGB(255, 255, 50)
+    }
+    chamsColor = colors[val] or Color3.fromRGB(255, 50, 50)
+end)
+
+
+
+createTabButton("Settings")
+tabs["Settings"] = createTabContent()
+
+local kbContainer = Instance.new("Frame", tabs["Settings"])
+kbContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+kbContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
+kbContainer.BorderSizePixel = 1
+kbContainer.Position = UDim2.new(0.5, -130, 0, 5)
+kbContainer.Size = UDim2.new(0, 260, 0, 32)
+local kbc = Instance.new("UICorner", kbContainer)
+kbc.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = kbContainer})
+
+local kbLabel = Instance.new("TextLabel", kbContainer)
+kbLabel.BackgroundTransparency = 1
+kbLabel.Position = UDim2.new(0, 10, 0, 0)
+kbLabel.Size = UDim2.new(0.55, 0, 1, 0)
+kbLabel.Font = Enum.Font.GothamBold
+kbLabel.Text = "Keybind"
+kbLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+kbLabel.TextSize = 11
+kbLabel.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = kbLabel})
+
+local kbButton = Instance.new("TextButton", kbContainer)
+kbButton.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+kbButton.BorderSizePixel = 0
+kbButton.Position = UDim2.new(1, -55, 0.5, -10)
+kbButton.Size = UDim2.new(0, 45, 0, 20)
+kbButton.Font = Enum.Font.GothamBold
+kbButton.Text = "Q"
+kbButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+kbButton.TextSize = 9
+local kbbc = Instance.new("UICorner", kbButton)
+kbbc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = kbButton, isToggle = false})
+
+kbButton.MouseButton1Click:Connect(function()
+    waitingForKeybind = true
+    kbButton.Text = "..."
+end)
+
+CreateCycle(tabs["Settings"], 45, "Target", {"Head", "Torso"}, "Head", function(val)
+    targetMode = val
+end)
+
+local GUI_TOGGLE_KEY = Enum.KeyCode.RightShift
+local waitingForGuiKeybind = false
+
+local guiKbContainer = Instance.new("Frame", tabs["Settings"])
+guiKbContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+guiKbContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
+guiKbContainer.BorderSizePixel = 1
+guiKbContainer.Position = UDim2.new(0.5, -130, 0, 85)
+guiKbContainer.Size = UDim2.new(0, 260, 0, 32)
+local gkc = Instance.new("UICorner", guiKbContainer)
+gkc.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = guiKbContainer})
+
+local guiKbLabel = Instance.new("TextLabel", guiKbContainer)
+guiKbLabel.BackgroundTransparency = 1
+guiKbLabel.Position = UDim2.new(0, 10, 0, 0)
+guiKbLabel.Size = UDim2.new(0.55, 0, 1, 0)
+guiKbLabel.Font = Enum.Font.GothamBold
+guiKbLabel.Text = "Toggle GUI"
+guiKbLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+guiKbLabel.TextSize = 11
+guiKbLabel.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = guiKbLabel})
+
+local guiKbButton = Instance.new("TextButton", guiKbContainer)
+guiKbButton.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+guiKbButton.BorderSizePixel = 0
+guiKbButton.Position = UDim2.new(1, -65, 0.5, -10)
+guiKbButton.Size = UDim2.new(0, 55, 0, 20)
+guiKbButton.Font = Enum.Font.GothamBold
+guiKbButton.Text = "RShift"
+guiKbButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+guiKbButton.TextSize = 9
+local gkbc = Instance.new("UICorner", guiKbButton)
+gkbc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = guiKbButton, isToggle = false})
+
+guiKbButton.MouseButton1Click:Connect(function()
+    waitingForGuiKeybind = true
+    guiKbButton.Text = "..."
+end)
+
+CreateCycle(tabs["Settings"], 125, "Theme", {"Dark", "Light", "Red", "Blue", "Purple", "Green"}, "Dark", function(val)
+    applyTheme(val)
+    switchTab(activeTab)
+end)
+
+CreateToggle(tabs["Settings"], 165, "Fullbright", false, function(state)
+    fullbrightEnabled = state
+    local Lighting = game:GetService("Lighting")
+    if state then
+        originalLighting.Ambient = Lighting.Ambient
+        originalLighting.Brightness = Lighting.Brightness
+        originalLighting.GlobalShadows = Lighting.GlobalShadows
+        originalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
+        Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+        Lighting.Brightness = 2
+        Lighting.GlobalShadows = false
+        Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+    else
+        if originalLighting.Ambient then Lighting.Ambient = originalLighting.Ambient end
+        if originalLighting.Brightness then Lighting.Brightness = originalLighting.Brightness end
+        if originalLighting.GlobalShadows ~= nil then Lighting.GlobalShadows = originalLighting.GlobalShadows end
+        if originalLighting.OutdoorAmbient then Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient end
+    end
+end)
+
+CreateToggle(tabs["Settings"], 205, "No Fog", false, function(state)
+    noFogEnabled = state
+    local Lighting = game:GetService("Lighting")
+    if state then
+        originalLighting.FogEnd = Lighting.FogEnd
+        originalLighting.FogStart = Lighting.FogStart
+        Lighting.FogEnd = 100000
+        Lighting.FogStart = 100000
+    else
+        if originalLighting.FogEnd then Lighting.FogEnd = originalLighting.FogEnd end
+        if originalLighting.FogStart then Lighting.FogStart = originalLighting.FogStart end
+    end
+end)
+
+CreateCycle(tabs["Settings"], 245, "Ambient", {"Default", "Red", "Blue", "Purple", "Green", "Pink", "Orange"}, "Default", function(val)
+    local Lighting = game:GetService("Lighting")
+    local ambientColors = {
+        Red = Color3.fromRGB(200, 50, 50),
+        Blue = Color3.fromRGB(50, 80, 200),
+        Purple = Color3.fromRGB(150, 50, 200),
+        Green = Color3.fromRGB(50, 180, 80),
+        Pink = Color3.fromRGB(255, 100, 180),
+        Orange = Color3.fromRGB(255, 150, 50)
+    }
+    if val == "Default" then
+        Lighting.Ambient = originalLighting.Ambient or Color3.fromRGB(0, 0, 0)
+        Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient or Color3.fromRGB(128, 128, 128)
+    else
+        if not originalLighting.Ambient then
+            originalLighting.Ambient = Lighting.Ambient
+            originalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
+        end
+        Lighting.Ambient = ambientColors[val]
+        Lighting.OutdoorAmbient = ambientColors[val]
+    end
+end)
+
+switchTab("Camera")
+
+for name, btn in pairs(tabButtons) do
+    btn.MouseButton1Click:Connect(function()
+        switchTab(name)
+    end)
+end
+
+local function getClosestPlayerToCursor()
+    local closest = nil
+    local closestDist = math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local char = player.Character
+            local root = char:FindFirstChild("HumanoidRootPart")
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if root and hum and hum.Health > 0 then
+                local screenPos, onScreen = Camera:WorldToScreenPoint(root.Position)
+                if onScreen then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    if dist < closestDist then
+                        closestDist = dist
+                        closest = player
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function getTargetPart(char)
+    if targetMode == "Torso" then
+        return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+    else
+        return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+    end
+end
+
+table.insert(connections, UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+    if waitingForKeybind then
+        LOCK_KEYBIND = input.KeyCode
+        kbButton.Text = input.KeyCode.Name
+        waitingForKeybind = false
+        return
+    end
+
+    if waitingForGuiKeybind then
+        GUI_TOGGLE_KEY = input.KeyCode
+        guiKbButton.Text = input.KeyCode.Name
+        waitingForGuiKeybind = false
+        return
+    end
+
+    if input.KeyCode == GUI_TOGGLE_KEY then
+        MainFrame.Visible = not MainFrame.Visible
+        return
+    end
+
+    if input.KeyCode == LOCK_KEYBIND then
+        if lockedTarget then
+            if hitboxEnabled and lockedTarget.Character then
+                local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    root.Size = Vector3.new(2, 2, 1)
+                    root.Transparency = 1
+                    root.CanCollide = false
+                    root.Material = Enum.Material.SmoothPlastic
+                end
+            end
+            lockedTarget = nil
+        else
+            local target = getClosestPlayerToCursor()
+            if target then
+                lockedTarget = target
+            end
+        end
+    end
+end))
+
+table.insert(connections, RunService.RenderStepped:Connect(function()
+    if not scriptActive then return end
+
+    if lockedTarget and lockedTarget.Character and hitboxEnabled then
+        local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.Size = HITBOX_SIZE
+            root.CanCollide = false
+            if hitboxShape == "Sphere" then
+                root.Shape = Enum.PartType.Ball
+            elseif hitboxShape == "Cylinder" then
+                root.Shape = Enum.PartType.Cylinder
+            else
+                root.Shape = Enum.PartType.Block
+            end
+            if hitboxVisible and hitboxOpacity > 0 then
+                root.Transparency = 1 - (hitboxOpacity / 10)
+                root.Color = hitboxColor
+                root.Material = Enum.Material.SmoothPlastic
+            else
+                root.Transparency = 1
+            end
+        end
+    end
+
+    if not lockedTarget then return end
+    local char = lockedTarget.Character
+    if not char then
+        lockedTarget = nil
+        return
+    end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local part = getTargetPart(char)
+    if not part or not hum or hum.Health <= 0 then
+        if hitboxEnabled then
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.Size = Vector3.new(2, 2, 1)
+                root.Transparency = 1
+                root.CanCollide = false
+                root.Material = Enum.Material.SmoothPlastic
+            end
+        end
+        lockedTarget = nil
+        return
+    end
+
+    if camLockEnabled then
+        local camPos = Camera.CFrame.Position
+        Camera.CFrame = CFrame.lookAt(camPos, part.Position)
+    end
+end))
+
+table.insert(connections, RunService.RenderStepped:Connect(function()
+    if not scriptActive then return end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local char = player.Character
+            local root = char:FindFirstChild("HumanoidRootPart")
+            local head = char:FindFirstChild("Head")
+            local hum = char:FindFirstChildOfClass("Humanoid")
+
+            if not espObjects[player] then
+                espObjects[player] = {}
+            end
+            local obj = espObjects[player]
+
+            if root and hum and hum.Health > 0 then
+                if espEnabled then
+                    if not obj.billboard or not obj.billboard.Parent then
+                        local bb = Instance.new("BillboardGui")
+                        bb.Name = "VoidESP"
+                        bb.Size = UDim2.new(0, 150, 0, 30)
+                        bb.StudsOffset = Vector3.new(0, 3.5, 0)
+                        bb.AlwaysOnTop = true
+                        bb.Adornee = head or root
+                        bb.Parent = char
+
+                        local nameLabel = Instance.new("TextLabel", bb)
+                        nameLabel.Name = "NameLabel"
+                        nameLabel.BackgroundTransparency = 1
+                        nameLabel.Size = UDim2.new(1, 0, 0.6, 0)
+                        nameLabel.Font = Enum.Font.GothamBold
+                        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                        nameLabel.TextSize = 12
+                        nameLabel.TextStrokeTransparency = 0.5
+
+                        local healthLabel = Instance.new("TextLabel", bb)
+                        healthLabel.Name = "HealthLabel"
+                        healthLabel.BackgroundTransparency = 1
+                        healthLabel.Position = UDim2.new(0, 0, 0.55, 0)
+                        healthLabel.Size = UDim2.new(1, 0, 0.4, 0)
+                        healthLabel.Font = Enum.Font.Gotham
+                        healthLabel.TextColor3 = Color3.fromRGB(180, 255, 180)
+                        healthLabel.TextSize = 10
+                        healthLabel.TextStrokeTransparency = 0.5
+
+                        obj.billboard = bb
+                    end
+                    local bb = obj.billboard
+                    local nameLabel = bb:FindFirstChild("NameLabel")
+                    local healthLabel = bb:FindFirstChild("HealthLabel")
+                    if nameLabel then
+                        nameLabel.Text = (espNameMode == "Display") and player.DisplayName or player.Name
+                    end
+                    if healthLabel then
+                        if espHealthEnabled then
+                            healthLabel.Visible = true
+                            healthLabel.Text = tostring(math.floor(hum.Health))
+                            healthLabel.TextColor3 = espHealthColor
+                        else
+                            healthLabel.Visible = false
+                        end
+                    end
+                else
+                    if obj.billboard then obj.billboard:Destroy() obj.billboard = nil end
+                end
+
+                if highlightEnabled then
+                    if not obj.highlight or not obj.highlight.Parent then
+                        local hl = Instance.new("Highlight")
+                        hl.Name = "VoidHighlight"
+                        hl.FillTransparency = 0.75
+                        hl.OutlineTransparency = 0
+                        hl.Adornee = char
+                        hl.Parent = char
+                        obj.highlight = hl
+                    end
+                    obj.highlight.FillColor = highlightColor
+                    obj.highlight.OutlineColor = highlightColor
+                else
+                    if obj.highlight then obj.highlight:Destroy() obj.highlight = nil end
+                end
+
+                if trailEnabled or rainbowTrailEnabled then
+                    if not obj.trail or not obj.trail.Parent then
+                        local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or root
+                        local a0 = Instance.new("Attachment")
+                        a0.Name = "VoidTrailA0"
+                        a0.Position = Vector3.new(0, 1, 0)
+                        a0.Parent = torso
+                        local a1 = Instance.new("Attachment")
+                        a1.Name = "VoidTrailA1"
+                        a1.Position = Vector3.new(0, -1, 0)
+                        a1.Parent = torso
+                        local trail = Instance.new("Trail")
+                        trail.Name = "VoidTrail"
+                        trail.Attachment0 = a0
+                        trail.Attachment1 = a1
+                        trail.Lifetime = 0.5
+                        trail.Color = ColorSequence.new(trailColor)
+                        trail.Transparency = NumberSequence.new(0, 1)
+                        trail.WidthScale = NumberSequence.new(1, 0)
+                        trail.Parent = torso
+                        obj.trail = trail
+                        obj.trailAttach0 = a0
+                        obj.trailAttach1 = a1
+                    end
+                    if rainbowTrailEnabled then
+                        local hue = (tick() * 0.5) % 1
+                        obj.trail.Color = ColorSequence.new(Color3.fromHSV(hue, 1, 1))
+                    else
+                        obj.trail.Color = ColorSequence.new(trailColor)
+                    end
+                else
+                    if obj.trail then obj.trail:Destroy() obj.trail = nil end
+                    if obj.trailAttach0 then obj.trailAttach0:Destroy() obj.trailAttach0 = nil end
+                    if obj.trailAttach1 then obj.trailAttach1:Destroy() obj.trailAttach1 = nil end
+                end
+
+                if chamsEnabled then
+                    if not obj.chams or not obj.chams.Parent then
+                        local hl = Instance.new("Highlight")
+                        hl.Name = "VoidChams"
+                        hl.FillTransparency = 0
+                        hl.OutlineTransparency = 1
+                        hl.Adornee = char
+                        hl.Parent = char
+                        obj.chams = hl
+                    end
+                    obj.chams.FillColor = chamsColor
+                else
+                    if obj.chams then obj.chams:Destroy() obj.chams = nil end
+                end
+
+                if distanceEnabled and obj.billboard then
+                    local distLabel = obj.billboard:FindFirstChild("DistLabel")
+                    if not distLabel then
+                        distLabel = Instance.new("TextLabel", obj.billboard)
+                        distLabel.Name = "DistLabel"
+                        distLabel.BackgroundTransparency = 1
+                        distLabel.Position = UDim2.new(0, 0, -0.4, 0)
+                        distLabel.Size = UDim2.new(1, 0, 0.3, 0)
+                        distLabel.Font = Enum.Font.Gotham
+                        distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+                        distLabel.TextSize = 9
+                        distLabel.TextStrokeTransparency = 0.5
+                    end
+                    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if myRoot then
+                        local dist = math.floor((myRoot.Position - root.Position).Magnitude)
+                        distLabel.Text = "[" .. dist .. "m]"
+                        distLabel.Visible = true
+                    end
+                else
+                    if obj.billboard then
+                        local distLabel = obj.billboard:FindFirstChild("DistLabel")
+                        if distLabel then distLabel.Visible = false end
+                    end
+                end
+
+            else
+                if obj.billboard then obj.billboard:Destroy() obj.billboard = nil end
+                if obj.highlight then obj.highlight:Destroy() obj.highlight = nil end
+                if obj.trail then obj.trail:Destroy() obj.trail = nil end
+                if obj.trailAttach0 then obj.trailAttach0:Destroy() obj.trailAttach0 = nil end
+                if obj.trailAttach1 then obj.trailAttach1:Destroy() obj.trailAttach1 = nil end
+                if obj.chams then obj.chams:Destroy() obj.chams = nil end
+            end
+        end
+    end
+
+    for player, obj in pairs(espObjects) do
+        if not player.Parent then
+            if obj.billboard then obj.billboard:Destroy() end
+            if obj.highlight then obj.highlight:Destroy() end
+            if obj.trail then obj.trail:Destroy() end
+            if obj.trailAttach0 then obj.trailAttach0:Destroy() end
+            if obj.trailAttach1 then obj.trailAttach1:Destroy() end
+            if obj.chams then obj.chams:Destroy() end
+            espObjects[player] = nil
+        end
+    end
+end))
+
+table.insert(connections, Players.PlayerRemoving:Connect(function(player)
+    if player == lockedTarget then
+        if hitboxEnabled and player.Character then
+            local root = player.Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.Size = Vector3.new(2, 2, 1)
+                root.Transparency = 1
+                root.Material = Enum.Material.SmoothPlastic
+            end
+        end
+        lockedTarget = nil
+    end
+end))
+
+CloseButton.MouseButton1Click:Connect(function()
+    scriptActive = false
+    camLockEnabled = false
+    lockedTarget = nil
+    for _, obj in pairs(espObjects) do
+        if obj.billboard then obj.billboard:Destroy() end
+        if obj.highlight then obj.highlight:Destroy() end
+        if obj.trail then obj.trail:Destroy() end
+        if obj.trailAttach0 then obj.trailAttach0:Destroy() end
+        if obj.trailAttach1 then obj.trailAttach1:Destroy() end
+        if obj.chams then obj.chams:Destroy() end
+    end
+    espObjects = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            for _, desc in ipairs(player.Character:GetDescendants()) do
+                if desc.Name == "VoidTrail" or desc.Name == "VoidTrailA0" or desc.Name == "VoidTrailA1" or desc.Name == "VoidChams" or desc.Name == "VoidHighlight" or desc.Name == "VoidESP" then
+                    desc:Destroy()
+                end
+            end
+        end
+    end
+    local Lighting = game:GetService("Lighting")
+    if originalLighting.Ambient then Lighting.Ambient = originalLighting.Ambient end
+    if originalLighting.Brightness then Lighting.Brightness = originalLighting.Brightness end
+    if originalLighting.GlobalShadows ~= nil then Lighting.GlobalShadows = originalLighting.GlobalShadows end
+    if originalLighting.OutdoorAmbient then Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient end
+    if originalLighting.FogEnd then Lighting.FogEnd = originalLighting.FogEnd end
+    if originalLighting.FogStart then Lighting.FogStart = originalLighting.FogStart end
+    espObjects = {}
+    for _, conn in ipairs(connections) do
+        conn:Disconnect()
+    end
+    ScreenGui:Destroy()
+end)
