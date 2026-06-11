@@ -1,13 +1,14 @@
--- Credits Darkness
--- Discord thecolddarkness
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local GuiService = game:GetService("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
+
+local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
+local hasDrawing = (typeof(Drawing) == "table" and Drawing.new ~= nil)
 
 if CoreGui:FindFirstChild("VoidLockUI") then
     CoreGui:FindFirstChild("VoidLockUI"):Destroy()
@@ -16,8 +17,8 @@ end
 local camLockEnabled = false
 local hitboxEnabled = false
 local hitboxVisible = false
-local hitboxShape = "Box" -- "Box", "Sphere", "Cylinder"
-local targetMode = "Head" -- "Head" or "Torso"
+local hitboxShape = "Box" 
+local targetMode = "Head" 
 local lockedTarget = nil
 local HITBOX_SIZE = Vector3.new(6, 6, 6)
 local LOCK_KEYBIND = Enum.KeyCode.Q
@@ -26,7 +27,7 @@ local connections = {}
 local scriptActive = true
 
 local espEnabled = false
-local espNameMode = "Username" -- "Username" or "Display"
+local espNameMode = "Username" 
 local espHealthEnabled = false
 local highlightEnabled = false
 local highlightColor = Color3.fromRGB(255, 255, 255)
@@ -35,24 +36,31 @@ local espObjects = {}
 local chamsEnabled = false
 local chamsColor = Color3.fromRGB(255, 50, 50)
 local skeletonEnabled = false
+local skeletonColor = Color3.fromRGB(255, 255, 255)
+local boxEspEnabled = false
+local boxEspColor = Color3.fromRGB(255, 255, 255)
 local distanceEnabled = false
 local rainbowTrailEnabled = false
+local tracersEnabled = false
+local autoRelockEnabled = false
+local fovCircleEnabled = false
+local fovCircleColor = Color3.fromRGB(255, 255, 255)
+local fovRadius = 100
 
 local fullbrightEnabled = false
 local noFogEnabled = false
-local ambientColor = "Default"
 local originalLighting = {}
 
 local themes = {
-    Dark = {
-        bg = Color3.fromRGB(15, 15, 17),
-        card = Color3.fromRGB(22, 22, 24),
-        border = Color3.fromRGB(38, 38, 40),
-        button = Color3.fromRGB(50, 50, 53),
+    Black = {
+        bg = Color3.fromRGB(5, 5, 5),
+        card = Color3.fromRGB(12, 12, 12),
+        border = Color3.fromRGB(25, 25, 25),
+        button = Color3.fromRGB(35, 35, 35),
         text = Color3.fromRGB(255, 255, 255),
-        accent = Color3.fromRGB(50, 50, 53),
-        tabActive = Color3.fromRGB(50, 50, 53),
-        tabInactive = Color3.fromRGB(22, 22, 24),
+        accent = Color3.fromRGB(35, 35, 35),
+        tabActive = Color3.fromRGB(35, 35, 35),
+        tabInactive = Color3.fromRGB(12, 12, 12),
     },
     Light = {
         bg = Color3.fromRGB(235, 235, 240),
@@ -74,25 +82,35 @@ local themes = {
         tabActive = Color3.fromRGB(120, 30, 35),
         tabInactive = Color3.fromRGB(35, 15, 18),
     },
-    Blue = {
-        bg = Color3.fromRGB(10, 14, 22),
-        card = Color3.fromRGB(15, 22, 38),
-        border = Color3.fromRGB(30, 50, 90),
-        button = Color3.fromRGB(30, 60, 130),
-        text = Color3.fromRGB(210, 230, 255),
-        accent = Color3.fromRGB(40, 80, 170),
-        tabActive = Color3.fromRGB(30, 60, 130),
-        tabInactive = Color3.fromRGB(15, 22, 38),
+    ["Dark Red"] = {
+        bg = Color3.fromRGB(14, 6, 8),
+        card = Color3.fromRGB(25, 10, 12),
+        border = Color3.fromRGB(55, 18, 22),
+        button = Color3.fromRGB(80, 20, 25),
+        text = Color3.fromRGB(240, 200, 200),
+        accent = Color3.fromRGB(100, 25, 30),
+        tabActive = Color3.fromRGB(80, 20, 25),
+        tabInactive = Color3.fromRGB(25, 10, 12),
     },
-    Purple = {
-        bg = Color3.fromRGB(16, 10, 22),
-        card = Color3.fromRGB(28, 18, 40),
-        border = Color3.fromRGB(60, 30, 90),
-        button = Color3.fromRGB(80, 35, 130),
-        text = Color3.fromRGB(230, 210, 255),
-        accent = Color3.fromRGB(110, 50, 170),
-        tabActive = Color3.fromRGB(80, 35, 130),
-        tabInactive = Color3.fromRGB(28, 18, 40),
+    Orange = {
+        bg = Color3.fromRGB(18, 12, 6),
+        card = Color3.fromRGB(30, 18, 10),
+        border = Color3.fromRGB(70, 40, 15),
+        button = Color3.fromRGB(110, 55, 20),
+        text = Color3.fromRGB(255, 230, 200),
+        accent = Color3.fromRGB(140, 70, 25),
+        tabActive = Color3.fromRGB(110, 55, 20),
+        tabInactive = Color3.fromRGB(30, 18, 10),
+    },
+    Yellow = {
+        bg = Color3.fromRGB(16, 15, 6),
+        card = Color3.fromRGB(28, 26, 10),
+        border = Color3.fromRGB(65, 60, 15),
+        button = Color3.fromRGB(100, 90, 20),
+        text = Color3.fromRGB(255, 250, 200),
+        accent = Color3.fromRGB(130, 120, 25),
+        tabActive = Color3.fromRGB(100, 90, 20),
+        tabInactive = Color3.fromRGB(28, 26, 10),
     },
     Green = {
         bg = Color3.fromRGB(10, 18, 12),
@@ -104,20 +122,126 @@ local themes = {
         tabActive = Color3.fromRGB(30, 100, 40),
         tabInactive = Color3.fromRGB(15, 30, 18),
     },
+    ["Dark Green"] = {
+        bg = Color3.fromRGB(6, 12, 8),
+        card = Color3.fromRGB(10, 20, 12),
+        border = Color3.fromRGB(20, 48, 25),
+        button = Color3.fromRGB(20, 65, 30),
+        text = Color3.fromRGB(200, 240, 210),
+        accent = Color3.fromRGB(25, 85, 35),
+        tabActive = Color3.fromRGB(20, 65, 30),
+        tabInactive = Color3.fromRGB(10, 20, 12),
+    },
+    Cyan = {
+        bg = Color3.fromRGB(8, 16, 18),
+        card = Color3.fromRGB(12, 26, 30),
+        border = Color3.fromRGB(20, 60, 68),
+        button = Color3.fromRGB(20, 85, 95),
+        text = Color3.fromRGB(200, 245, 250),
+        accent = Color3.fromRGB(25, 110, 125),
+        tabActive = Color3.fromRGB(20, 85, 95),
+        tabInactive = Color3.fromRGB(12, 26, 30),
+    },
+    Blue = {
+        bg = Color3.fromRGB(10, 14, 22),
+        card = Color3.fromRGB(15, 22, 38),
+        border = Color3.fromRGB(30, 50, 90),
+        button = Color3.fromRGB(30, 60, 130),
+        text = Color3.fromRGB(210, 230, 255),
+        accent = Color3.fromRGB(40, 80, 170),
+        tabActive = Color3.fromRGB(30, 60, 130),
+        tabInactive = Color3.fromRGB(15, 22, 38),
+    },
+    ["Dark Blue"] = {
+        bg = Color3.fromRGB(6, 8, 16),
+        card = Color3.fromRGB(10, 14, 28),
+        border = Color3.fromRGB(20, 30, 60),
+        button = Color3.fromRGB(20, 35, 80),
+        text = Color3.fromRGB(190, 210, 245),
+        accent = Color3.fromRGB(25, 45, 100),
+        tabActive = Color3.fromRGB(20, 35, 80),
+        tabInactive = Color3.fromRGB(10, 14, 28),
+    },
+    Purple = {
+        bg = Color3.fromRGB(16, 10, 22),
+        card = Color3.fromRGB(28, 18, 40),
+        border = Color3.fromRGB(60, 30, 90),
+        button = Color3.fromRGB(80, 35, 130),
+        text = Color3.fromRGB(230, 210, 255),
+        accent = Color3.fromRGB(110, 50, 170),
+        tabActive = Color3.fromRGB(80, 35, 130),
+        tabInactive = Color3.fromRGB(28, 18, 40),
+    },
+    Pink = {
+        bg = Color3.fromRGB(20, 10, 16),
+        card = Color3.fromRGB(32, 16, 25),
+        border = Color3.fromRGB(70, 30, 50),
+        button = Color3.fromRGB(100, 35, 65),
+        text = Color3.fromRGB(255, 220, 240),
+        accent = Color3.fromRGB(130, 45, 80),
+        tabActive = Color3.fromRGB(100, 35, 65),
+        tabInactive = Color3.fromRGB(32, 16, 25),
+    },
+    White = {
+        bg = Color3.fromRGB(240, 240, 242),
+        card = Color3.fromRGB(252, 252, 255),
+        border = Color3.fromRGB(210, 210, 215),
+        button = Color3.fromRGB(225, 225, 230),
+        text = Color3.fromRGB(15, 15, 20),
+        accent = Color3.fromRGB(210, 210, 215),
+        tabActive = Color3.fromRGB(210, 210, 215),
+        tabInactive = Color3.fromRGB(245, 245, 248),
+    },
+    Gray = {
+        bg = Color3.fromRGB(30, 30, 32),
+        card = Color3.fromRGB(40, 40, 43),
+        border = Color3.fromRGB(60, 60, 63),
+        button = Color3.fromRGB(70, 70, 75),
+        text = Color3.fromRGB(230, 230, 235),
+        accent = Color3.fromRGB(85, 85, 90),
+        tabActive = Color3.fromRGB(70, 70, 75),
+        tabInactive = Color3.fromRGB(40, 40, 43),
+    },
 }
-local currentTheme = "Dark"
+local currentTheme = "Black"
 local themedElements = {}
 
 local ScreenGui = Instance.new("ScreenGui", CoreGui)
 ScreenGui.Name = "VoidLockUI"
 ScreenGui.ResetOnSpawn = false
 
+-- Watermark
+local Watermark = Instance.new("TextLabel", ScreenGui)
+Watermark.BackgroundTransparency = 1
+Watermark.Position = UDim2.new(1, -80, 0, 10)
+Watermark.Size = UDim2.new(0, 70, 0, 22)
+Watermark.Font = Enum.Font.GothamBold
+Watermark.Text = "Void"
+Watermark.TextColor3 = Color3.fromRGB(255, 255, 255)
+Watermark.TextSize = 16
+Watermark.TextXAlignment = Enum.TextXAlignment.Right
+Watermark.TextStrokeTransparency = 0.6
+Watermark.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+
+-- FOV Circle Drawing
+local fovCircle = nil
+if hasDrawing then
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Thickness = 1
+    fovCircle.NumSides = 64
+    fovCircle.Radius = fovRadius
+    fovCircle.Filled = false
+    fovCircle.Visible = false
+    fovCircle.Color = fovCircleColor
+    fovCircle.Transparency = 0.8
+end
+
 local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
+MainFrame.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 MainFrame.BorderSizePixel = 0
 MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-MainFrame.Size = UDim2.new(0, 360, 0, 360)
+MainFrame.Size = isMobile and UDim2.new(0, 300, 0, 320) or UDim2.new(0, 360, 0, 360)
 MainFrame.Active = true
 MainFrame.Draggable = true
 local mainCorner = Instance.new("UICorner", MainFrame)
@@ -347,15 +471,114 @@ end
 createTabButton("Camera")
 tabs["Camera"] = createTabContent()
 
-CreateToggle(tabs["Camera"], 5, "Camera Lock", false, function(state)
+-- Helper to create a section header label
+local function CreateSectionHeader(parent, yPos, text)
+    local header = Instance.new("TextLabel", parent)
+    header.BackgroundTransparency = 1
+    header.Position = UDim2.new(0.5, -130, 0, yPos)
+    header.Size = UDim2.new(0, 260, 0, 20)
+    header.Font = Enum.Font.GothamBold
+    header.Text = text
+    header.TextColor3 = Color3.fromRGB(220, 220, 220)
+    header.TextSize = 11
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    table.insert(themedElements, {type = "label", obj = header})
+    return header
+end
+
+local lockFeedbackEnabled = false
+
+CreateSectionHeader(tabs["Camera"], 5, "Toggles")
+
+CreateToggle(tabs["Camera"], 25, "Camera Lock", false, function(state)
     camLockEnabled = state
     if not state then lockedTarget = nil end
+end)
+
+CreateToggle(tabs["Camera"], 65, "Notification", false, function(state)
+    lockFeedbackEnabled = state
+end)
+
+CreateToggle(tabs["Camera"], 105, "FOV Circle", false, function(state)
+    fovCircleEnabled = state
+end)
+
+CreateSectionHeader(tabs["Camera"], 150, "Settings")
+
+local fovSizeContainer = Instance.new("Frame", tabs["Camera"])
+fovSizeContainer.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+fovSizeContainer.BorderColor3 = Color3.fromRGB(25, 25, 25)
+fovSizeContainer.BorderSizePixel = 1
+fovSizeContainer.Position = UDim2.new(0.5, -130, 0, 170)
+fovSizeContainer.Size = UDim2.new(0, 260, 0, 32)
+local fsc = Instance.new("UICorner", fovSizeContainer)
+fsc.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = fovSizeContainer})
+
+local fovLbl = Instance.new("TextLabel", fovSizeContainer)
+fovLbl.BackgroundTransparency = 1
+fovLbl.Position = UDim2.new(0, 10, 0, 0)
+fovLbl.Size = UDim2.new(0.45, 0, 1, 0)
+fovLbl.Font = Enum.Font.GothamBold
+fovLbl.Text = "FOV Size"
+fovLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovLbl.TextSize = 11
+fovLbl.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = fovLbl})
+
+local fovValue = Instance.new("TextLabel", fovSizeContainer)
+fovValue.BackgroundTransparency = 1
+fovValue.Position = UDim2.new(0.45, 0, 0, 0)
+fovValue.Size = UDim2.new(0.2, 0, 1, 0)
+fovValue.Font = Enum.Font.GothamBold
+fovValue.Text = "100"
+fovValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovValue.TextSize = 11
+fovValue.TextXAlignment = Enum.TextXAlignment.Center
+table.insert(themedElements, {type = "label", obj = fovValue})
+
+local fovMinus = Instance.new("TextButton", fovSizeContainer)
+fovMinus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+fovMinus.BorderSizePixel = 0
+fovMinus.Position = UDim2.new(1, -80, 0.5, -10)
+fovMinus.Size = UDim2.new(0, 28, 0, 20)
+fovMinus.Font = Enum.Font.GothamBold
+fovMinus.Text = "-"
+fovMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovMinus.TextSize = 12
+local fmc = Instance.new("UICorner", fovMinus)
+fmc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = fovMinus, isToggle = false})
+
+local fovPlus = Instance.new("TextButton", fovSizeContainer)
+fovPlus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+fovPlus.BorderSizePixel = 0
+fovPlus.Position = UDim2.new(1, -42, 0.5, -10)
+fovPlus.Size = UDim2.new(0, 28, 0, 20)
+fovPlus.Font = Enum.Font.GothamBold
+fovPlus.Text = "+"
+fovPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovPlus.TextSize = 12
+local fpc = Instance.new("UICorner", fovPlus)
+fpc.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = fovPlus, isToggle = false})
+
+fovMinus.MouseButton1Click:Connect(function()
+    fovRadius = math.max(20, fovRadius - 10)
+    fovValue.Text = tostring(fovRadius)
+end)
+
+fovPlus.MouseButton1Click:Connect(function()
+    fovRadius = math.min(500, fovRadius + 10)
+    fovValue.Text = tostring(fovRadius)
 end)
 
 createTabButton("Hitbox")
 tabs["Hitbox"] = createTabContent()
 
-CreateToggle(tabs["Hitbox"], 5, "Hitbox Expander", false, function(state)
+CreateSectionHeader(tabs["Hitbox"], 5, "Toggles")
+
+CreateToggle(tabs["Hitbox"], 25, "Hitbox Expander", false, function(state)
     hitboxEnabled = state
     if not state and lockedTarget and lockedTarget.Character then
         local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
@@ -367,7 +590,7 @@ CreateToggle(tabs["Hitbox"], 5, "Hitbox Expander", false, function(state)
     end
 end)
 
-CreateToggle(tabs["Hitbox"], 45, "Hitbox Visibility", false, function(state)
+CreateToggle(tabs["Hitbox"], 65, "Hitbox Visibility", false, function(state)
     hitboxVisible = state
     if not state and lockedTarget and lockedTarget.Character then
         local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
@@ -377,11 +600,13 @@ CreateToggle(tabs["Hitbox"], 45, "Hitbox Visibility", false, function(state)
     end
 end)
 
+CreateSectionHeader(tabs["Hitbox"], 110, "Settings")
+
 local transContainer = Instance.new("Frame", tabs["Hitbox"])
 transContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
 transContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
 transContainer.BorderSizePixel = 1
-transContainer.Position = UDim2.new(0.5, -130, 0, 85)
+transContainer.Position = UDim2.new(0.5, -130, 0, 130)
 transContainer.Size = UDim2.new(0, 260, 0, 32)
 local tc = Instance.new("UICorner", transContainer)
 tc.CornerRadius = UDim.new(0, 5)
@@ -451,7 +676,7 @@ local sizeContainer = Instance.new("Frame", tabs["Hitbox"])
 sizeContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
 sizeContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
 sizeContainer.BorderSizePixel = 1
-sizeContainer.Position = UDim2.new(0.5, -130, 0, 125)
+sizeContainer.Position = UDim2.new(0.5, -130, 0, 170)
 sizeContainer.Size = UDim2.new(0, 260, 0, 32)
 local sc = Instance.new("UICorner", sizeContainer)
 sc.CornerRadius = UDim.new(0, 5)
@@ -519,12 +744,14 @@ plusBtn.MouseButton1Click:Connect(function()
     HITBOX_SIZE = Vector3.new(currentSize, currentSize, currentSize)
 end)
 
-CreateCycle(tabs["Hitbox"], 165, "Shape", {"Box", "Sphere", "Cylinder"}, "Box", function(val)
+CreateCycle(tabs["Hitbox"], 210, "Shape", {"Box", "Sphere", "Cylinder"}, "Box", function(val)
     hitboxShape = val
 end)
 
+CreateSectionHeader(tabs["Hitbox"], 255, "Colors")
+
 local hitboxColor = Color3.fromRGB(40, 40, 42)
-CreateCycle(tabs["Hitbox"], 205, "Color", {"Dark Gray", "Red", "Blue", "Green", "Purple", "Black", "White"}, "Dark Gray", function(val)
+CreateCycle(tabs["Hitbox"], 275, "Hitbox Color", {"Dark Gray", "Red", "Blue", "Green", "Purple", "Black", "White"}, "Dark Gray", function(val)
     local colors = {
         ["Dark Gray"] = Color3.fromRGB(40, 40, 42),
         Red = Color3.fromRGB(180, 30, 30),
@@ -540,37 +767,39 @@ end)
 createTabButton("Visuals")
 tabs["Visuals"] = createTabContent()
 
-CreateToggle(tabs["Visuals"], 5, "ESP", false, function(state)
+local trailEnabled = false
+local trailColor = Color3.fromRGB(255, 255, 255)
+
+-- ═══════════════════════════════════════
+-- TOGGLES SUB-CATEGORY
+-- ═══════════════════════════════════════
+CreateSectionHeader(tabs["Visuals"], 5, "Toggles")
+
+CreateToggle(tabs["Visuals"], 25, "ESP", false, function(state)
     espEnabled = state
     if not state then
         for _, obj in pairs(espObjects) do
             if obj.billboard then obj.billboard:Destroy() end
             if obj.highlight then obj.highlight:Destroy() end
+            if obj.trail then obj.trail:Destroy() end
+            if obj.trailAttach0 then obj.trailAttach0:Destroy() end
+            if obj.trailAttach1 then obj.trailAttach1:Destroy() end
+            if obj.chams then obj.chams:Destroy() end
+            if obj.tracer then obj.tracer:Remove() end
+            if obj.boxOutline then obj.boxOutline:Remove() end
+            if obj.skeleton then
+                for _, line in pairs(obj.skeleton) do line:Remove() end
+            end
         end
         espObjects = {}
     end
 end)
 
-CreateCycle(tabs["Visuals"], 45, "Name Type", {"Username", "Display"}, "Username", function(val)
-    espNameMode = val
-end)
-
-CreateToggle(tabs["Visuals"], 85, "Show Health", false, function(state)
+CreateToggle(tabs["Visuals"], 65, "Show Health", false, function(state)
     espHealthEnabled = state
 end)
 
-CreateCycle(tabs["Visuals"], 125, "Health Color", {"Green", "White", "Red", "Yellow", "Blue"}, "Green", function(val)
-    local colors = {
-        Green = Color3.fromRGB(180, 255, 180),
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 100, 100),
-        Yellow = Color3.fromRGB(255, 255, 100),
-        Blue = Color3.fromRGB(100, 180, 255)
-    }
-    espHealthColor = colors[val] or Color3.fromRGB(180, 255, 180)
-end)
-
-CreateToggle(tabs["Visuals"], 165, "Body Highlight", false, function(state)
+CreateToggle(tabs["Visuals"], 105, "Body Highlight", false, function(state)
     highlightEnabled = state
     if not state then
         for _, obj in pairs(espObjects) do
@@ -579,10 +808,7 @@ CreateToggle(tabs["Visuals"], 165, "Body Highlight", false, function(state)
     end
 end)
 
-local trailEnabled = false
-local trailColor = Color3.fromRGB(255, 255, 255)
-
-CreateToggle(tabs["Visuals"], 205, "Trail", false, function(state)
+CreateToggle(tabs["Visuals"], 145, "Trail", false, function(state)
     trailEnabled = state
     if not state then
         for _, obj in pairs(espObjects) do
@@ -593,7 +819,80 @@ CreateToggle(tabs["Visuals"], 205, "Trail", false, function(state)
     end
 end)
 
-CreateCycle(tabs["Visuals"], 245, "Trail Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+CreateToggle(tabs["Visuals"], 185, "Chams", false, function(state)
+    chamsEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.chams then obj.chams:Destroy() obj.chams = nil end
+        end
+    end
+end)
+
+CreateToggle(tabs["Visuals"], 225, "Distance", false, function(state)
+    distanceEnabled = state
+end)
+
+CreateToggle(tabs["Visuals"], 265, "Tracers", false, function(state)
+    tracersEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.tracer then obj.tracer:Remove() obj.tracer = nil end
+        end
+    end
+end)
+
+CreateToggle(tabs["Visuals"], 305, "Box ESP", false, function(state)
+    boxEspEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.boxOutline then obj.boxOutline:Remove() obj.boxOutline = nil end
+        end
+    end
+end)
+
+CreateToggle(tabs["Visuals"], 345, "Skeleton", false, function(state)
+    skeletonEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.skeleton then
+                for _, line in pairs(obj.skeleton) do
+                    line:Remove()
+                end
+                obj.skeleton = nil
+            end
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════
+-- COLORS SUB-CATEGORY
+-- ═══════════════════════════════════════
+CreateSectionHeader(tabs["Visuals"], 390, "Colors")
+
+CreateCycle(tabs["Visuals"], 410, "Health Color", {"Green", "White", "Red", "Yellow", "Blue"}, "Green", function(val)
+    local colors = {
+        Green = Color3.fromRGB(180, 255, 180),
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 100, 100),
+        Yellow = Color3.fromRGB(255, 255, 100),
+        Blue = Color3.fromRGB(100, 180, 255)
+    }
+    espHealthColor = colors[val] or Color3.fromRGB(180, 255, 180)
+end)
+
+CreateCycle(tabs["Visuals"], 450, "Highlight Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow"}, "White", function(val)
+    local colors = {
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 50, 50),
+        Green = Color3.fromRGB(50, 255, 50),
+        Blue = Color3.fromRGB(50, 100, 255),
+        Purple = Color3.fromRGB(180, 50, 255),
+        Yellow = Color3.fromRGB(255, 255, 50)
+    }
+    highlightColor = colors[val] or Color3.fromRGB(255, 255, 255)
+end)
+
+CreateCycle(tabs["Visuals"], 490, "Trail Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
     if val == "Rainbow" then
         rainbowTrailEnabled = true
     else
@@ -611,28 +910,7 @@ CreateCycle(tabs["Visuals"], 245, "Trail Color", {"White", "Red", "Green", "Blue
     end
 end)
 
-CreateCycle(tabs["Visuals"], 285, "Highlight Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow"}, "White", function(val)
-    local colors = {
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 50, 50),
-        Green = Color3.fromRGB(50, 255, 50),
-        Blue = Color3.fromRGB(50, 100, 255),
-        Purple = Color3.fromRGB(180, 50, 255),
-        Yellow = Color3.fromRGB(255, 255, 50)
-    }
-    highlightColor = colors[val] or Color3.fromRGB(255, 255, 255)
-end)
-
-CreateToggle(tabs["Visuals"], 325, "Chams", false, function(state)
-    chamsEnabled = state
-    if not state then
-        for _, obj in pairs(espObjects) do
-            if obj.chams then obj.chams:Destroy() obj.chams = nil end
-        end
-    end
-end)
-
-CreateCycle(tabs["Visuals"], 365, "Chams Color", {"Red", "Blue", "Green", "Purple", "White", "Yellow"}, "Red", function(val)
+CreateCycle(tabs["Visuals"], 530, "Chams Color", {"Red", "Blue", "Green", "Purple", "White", "Yellow"}, "Red", function(val)
     local colors = {
         Red = Color3.fromRGB(255, 50, 50),
         Blue = Color3.fromRGB(50, 100, 255),
@@ -644,16 +922,71 @@ CreateCycle(tabs["Visuals"], 365, "Chams Color", {"Red", "Blue", "Green", "Purpl
     chamsColor = colors[val] or Color3.fromRGB(255, 50, 50)
 end)
 
+local tracerColor = Color3.fromRGB(255, 255, 255)
+CreateCycle(tabs["Visuals"], 570, "Tracer Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
+    local colors = {
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 50, 50),
+        Green = Color3.fromRGB(50, 255, 50),
+        Blue = Color3.fromRGB(50, 100, 255),
+        Purple = Color3.fromRGB(180, 50, 255),
+        Yellow = Color3.fromRGB(255, 255, 50),
+        Pink = Color3.fromRGB(255, 100, 180)
+    }
+    tracerColor = colors[val] or Color3.fromRGB(255, 255, 255)
+end)
+
+CreateCycle(tabs["Visuals"], 610, "FOV Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
+    local colors = {
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 50, 50),
+        Green = Color3.fromRGB(50, 255, 50),
+        Blue = Color3.fromRGB(50, 100, 255),
+        Purple = Color3.fromRGB(180, 50, 255),
+        Yellow = Color3.fromRGB(255, 255, 50),
+        Pink = Color3.fromRGB(255, 100, 180)
+    }
+    fovCircleColor = colors[val] or Color3.fromRGB(255, 255, 255)
+end)
+
+CreateCycle(tabs["Visuals"], 650, "Box Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
+    local colors = {
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 50, 50),
+        Green = Color3.fromRGB(50, 255, 50),
+        Blue = Color3.fromRGB(50, 100, 255),
+        Purple = Color3.fromRGB(180, 50, 255),
+        Yellow = Color3.fromRGB(255, 255, 50),
+        Pink = Color3.fromRGB(255, 100, 180)
+    }
+    boxEspColor = colors[val] or Color3.fromRGB(255, 255, 255)
+end)
+
+CreateCycle(tabs["Visuals"], 690, "Skeleton Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
+    local colors = {
+        White = Color3.fromRGB(255, 255, 255),
+        Red = Color3.fromRGB(255, 50, 50),
+        Green = Color3.fromRGB(50, 255, 50),
+        Blue = Color3.fromRGB(50, 100, 255),
+        Purple = Color3.fromRGB(180, 50, 255),
+        Yellow = Color3.fromRGB(255, 255, 50),
+        Pink = Color3.fromRGB(255, 100, 180)
+    }
+    skeletonColor = colors[val] or Color3.fromRGB(255, 255, 255)
+end)
+
 
 
 createTabButton("Settings")
 tabs["Settings"] = createTabContent()
 
+CreateSectionHeader(tabs["Settings"], 5, "Keybinds")
+
 local kbContainer = Instance.new("Frame", tabs["Settings"])
 kbContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
 kbContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
 kbContainer.BorderSizePixel = 1
-kbContainer.Position = UDim2.new(0.5, -130, 0, 5)
+kbContainer.Position = UDim2.new(0.5, -130, 0, 25)
 kbContainer.Size = UDim2.new(0, 260, 0, 32)
 local kbc = Instance.new("UICorner", kbContainer)
 kbc.CornerRadius = UDim.new(0, 5)
@@ -688,10 +1021,6 @@ kbButton.MouseButton1Click:Connect(function()
     kbButton.Text = "..."
 end)
 
-CreateCycle(tabs["Settings"], 45, "Target", {"Head", "Torso"}, "Head", function(val)
-    targetMode = val
-end)
-
 local GUI_TOGGLE_KEY = Enum.KeyCode.RightShift
 local waitingForGuiKeybind = false
 
@@ -699,7 +1028,7 @@ local guiKbContainer = Instance.new("Frame", tabs["Settings"])
 guiKbContainer.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
 guiKbContainer.BorderColor3 = Color3.fromRGB(38, 38, 40)
 guiKbContainer.BorderSizePixel = 1
-guiKbContainer.Position = UDim2.new(0.5, -130, 0, 85)
+guiKbContainer.Position = UDim2.new(0.5, -130, 0, 65)
 guiKbContainer.Size = UDim2.new(0, 260, 0, 32)
 local gkc = Instance.new("UICorner", guiKbContainer)
 gkc.CornerRadius = UDim.new(0, 5)
@@ -734,12 +1063,28 @@ guiKbButton.MouseButton1Click:Connect(function()
     guiKbButton.Text = "..."
 end)
 
-CreateCycle(tabs["Settings"], 125, "Theme", {"Dark", "Light", "Red", "Blue", "Purple", "Green"}, "Dark", function(val)
+CreateSectionHeader(tabs["Settings"], 110, "Options")
+
+CreateCycle(tabs["Settings"], 130, "Target", {"Head", "Torso"}, "Head", function(val)
+    targetMode = val
+end)
+
+CreateCycle(tabs["Settings"], 170, "Name Type", {"Username", "Display"}, "Username", function(val)
+    espNameMode = val
+end)
+
+CreateCycle(tabs["Settings"], 210, "Theme", {"Black", "Light", "Gray", "White", "Red", "Dark Red", "Orange", "Yellow", "Green", "Dark Green", "Cyan", "Blue", "Dark Blue", "Purple", "Pink"}, "Black", function(val)
     applyTheme(val)
     switchTab(activeTab)
 end)
 
-CreateToggle(tabs["Settings"], 165, "Fullbright", false, function(state)
+CreateToggle(tabs["Settings"], 250, "Auto Relock", false, function(state)
+    autoRelockEnabled = state
+end)
+
+CreateSectionHeader(tabs["Settings"], 295, "Lighting")
+
+CreateToggle(tabs["Settings"], 315, "Fullbright", false, function(state)
     fullbrightEnabled = state
     local Lighting = game:GetService("Lighting")
     if state then
@@ -759,7 +1104,7 @@ CreateToggle(tabs["Settings"], 165, "Fullbright", false, function(state)
     end
 end)
 
-CreateToggle(tabs["Settings"], 205, "No Fog", false, function(state)
+CreateToggle(tabs["Settings"], 355, "No Fog", false, function(state)
     noFogEnabled = state
     local Lighting = game:GetService("Lighting")
     if state then
@@ -770,29 +1115,6 @@ CreateToggle(tabs["Settings"], 205, "No Fog", false, function(state)
     else
         if originalLighting.FogEnd then Lighting.FogEnd = originalLighting.FogEnd end
         if originalLighting.FogStart then Lighting.FogStart = originalLighting.FogStart end
-    end
-end)
-
-CreateCycle(tabs["Settings"], 245, "Ambient", {"Default", "Red", "Blue", "Purple", "Green", "Pink", "Orange"}, "Default", function(val)
-    local Lighting = game:GetService("Lighting")
-    local ambientColors = {
-        Red = Color3.fromRGB(200, 50, 50),
-        Blue = Color3.fromRGB(50, 80, 200),
-        Purple = Color3.fromRGB(150, 50, 200),
-        Green = Color3.fromRGB(50, 180, 80),
-        Pink = Color3.fromRGB(255, 100, 180),
-        Orange = Color3.fromRGB(255, 150, 50)
-    }
-    if val == "Default" then
-        Lighting.Ambient = originalLighting.Ambient or Color3.fromRGB(0, 0, 0)
-        Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient or Color3.fromRGB(128, 128, 128)
-    else
-        if not originalLighting.Ambient then
-            originalLighting.Ambient = Lighting.Ambient
-            originalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
-        end
-        Lighting.Ambient = ambientColors[val]
-        Lighting.OutdoorAmbient = ambientColors[val]
     end
 end)
 
@@ -807,7 +1129,13 @@ end
 local function getClosestPlayerToCursor()
     local closest = nil
     local closestDist = math.huge
-    local mousePos = UserInputService:GetMouseLocation()
+    local mousePos
+    if isMobile then
+        local viewportSize = Camera.ViewportSize
+        mousePos = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+    else
+        mousePos = UserInputService:GetMouseLocation()
+    end
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
@@ -818,7 +1146,7 @@ local function getClosestPlayerToCursor()
                 local screenPos, onScreen = Camera:WorldToScreenPoint(root.Position)
                 if onScreen then
                     local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                    if dist < closestDist then
+                    if dist < fovRadius and dist < closestDist then
                         closestDist = dist
                         closest = player
                     end
@@ -862,6 +1190,14 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
 
     if input.KeyCode == LOCK_KEYBIND then
         if lockedTarget then
+            if lockFeedbackEnabled then
+                local name = (espNameMode == "Display") and lockedTarget.DisplayName or lockedTarget.Name
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Unlocked",
+                    Text = "You Unlocked From " .. name,
+                    Duration = 2
+                })
+            end
             if hitboxEnabled and lockedTarget.Character then
                 local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
                 if root then
@@ -876,6 +1212,14 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
             local target = getClosestPlayerToCursor()
             if target then
                 lockedTarget = target
+                if lockFeedbackEnabled then
+                    local name = (espNameMode == "Display") and target.DisplayName or target.Name
+                    game:GetService("StarterGui"):SetCore("SendNotification", {
+                        Title = "Locked",
+                        Text = "You Locked Onto " .. name,
+                        Duration = 2
+                    })
+                end
             end
         end
     end
@@ -883,6 +1227,17 @@ end))
 
 table.insert(connections, RunService.RenderStepped:Connect(function()
     if not scriptActive then return end
+
+    -- FOV Circle update
+    if fovCircleEnabled and fovCircle then
+        local mousePos = UserInputService:GetMouseLocation()
+        fovCircle.Position = Vector2.new(mousePos.X, mousePos.Y)
+        fovCircle.Radius = fovRadius
+        fovCircle.Color = fovCircleColor
+        fovCircle.Visible = true
+    elseif fovCircle then
+        fovCircle.Visible = false
+    end
 
     if lockedTarget and lockedTarget.Character and hitboxEnabled then
         local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
@@ -924,7 +1279,24 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                 root.Material = Enum.Material.SmoothPlastic
             end
         end
-        lockedTarget = nil
+        if autoRelockEnabled then
+            local newTarget = getClosestPlayerToCursor()
+            if newTarget and newTarget ~= lockedTarget then
+                lockedTarget = newTarget
+                if lockFeedbackEnabled then
+                    local name = (espNameMode == "Display") and newTarget.DisplayName or newTarget.Name
+                    game:GetService("StarterGui"):SetCore("SendNotification", {
+                        Title = "Relocked",
+                        Text = "You Relocked Onto " .. name,
+                        Duration = 2
+                    })
+                end
+            else
+                lockedTarget = nil
+            end
+        else
+            lockedTarget = nil
+        end
         return
     end
 
@@ -1073,8 +1445,8 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                         distLabel = Instance.new("TextLabel", obj.billboard)
                         distLabel.Name = "DistLabel"
                         distLabel.BackgroundTransparency = 1
-                        distLabel.Position = UDim2.new(0, 0, -0.4, 0)
-                        distLabel.Size = UDim2.new(1, 0, 0.3, 0)
+                        distLabel.Position = UDim2.new(0, 0, -0.5, 0)
+                        distLabel.Size = UDim2.new(1, 0, 0.35, 0)
                         distLabel.Font = Enum.Font.Gotham
                         distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
                         distLabel.TextSize = 9
@@ -1093,6 +1465,163 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                     end
                 end
 
+                if tracersEnabled and hasDrawing then
+                    if not obj.tracer then
+                        local line = Drawing.new("Line")
+                        line.Visible = false
+                        line.Color = tracerColor
+                        line.Thickness = 1
+                        line.Transparency = 0.8
+                        obj.tracer = line
+                    end
+                    obj.tracer.Color = tracerColor
+                    local targetPart = getTargetPart(char)
+                    if targetPart then
+                        local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+                        if onScreen then
+                            local viewportSize = Camera.ViewportSize
+                            obj.tracer.From = Vector2.new(viewportSize.X / 2, viewportSize.Y)
+                            obj.tracer.To = Vector2.new(screenPos.X, screenPos.Y)
+                            obj.tracer.Visible = true
+                        else
+                            obj.tracer.Visible = false
+                        end
+                    else
+                        obj.tracer.Visible = false
+                    end
+                else
+                    if obj.tracer then obj.tracer:Remove() obj.tracer = nil end
+                end
+
+                -- Box ESP
+                if boxEspEnabled and hasDrawing then
+                    if not obj.boxOutline then
+                        local outline = Drawing.new("Quad")
+                        outline.Visible = false
+                        outline.Color = boxEspColor
+                        outline.Thickness = 1
+                        outline.Filled = false
+                        obj.boxOutline = outline
+                    end
+                    obj.boxOutline.Color = boxEspColor
+                    local rootPos = root.Position
+                    local rootSize = char:GetExtentsSize()
+                    local half = rootSize / 2
+
+                    local corners = {
+                        Camera:WorldToViewportPoint(rootPos + Vector3.new(-half.X, half.Y, 0)),
+                        Camera:WorldToViewportPoint(rootPos + Vector3.new(half.X, half.Y, 0)),
+                        Camera:WorldToViewportPoint(rootPos + Vector3.new(half.X, -half.Y, 0)),
+                        Camera:WorldToViewportPoint(rootPos + Vector3.new(-half.X, -half.Y, 0)),
+                    }
+                    local allOnScreen = true
+                    for _, c in ipairs(corners) do
+                        if not select(2, Camera:WorldToViewportPoint(rootPos + Vector3.new(0, 0, 0))) then
+                            allOnScreen = false
+                            break
+                        end
+                    end
+
+                    if allOnScreen then
+                        local topLeft = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, half.Y, 0))
+                        local bottomRight = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, -half.Y, 0))
+                        local height = math.abs(topLeft.Y - bottomRight.Y)
+                        local width = height * 0.6
+
+                        local centerX = topLeft.X
+                        local topY = topLeft.Y
+                        local botY = bottomRight.Y
+
+                        obj.boxOutline.PointA = Vector2.new(centerX - width / 2, topY)
+                        obj.boxOutline.PointB = Vector2.new(centerX + width / 2, topY)
+                        obj.boxOutline.PointC = Vector2.new(centerX + width / 2, botY)
+                        obj.boxOutline.PointD = Vector2.new(centerX - width / 2, botY)
+                        obj.boxOutline.Visible = true
+                    else
+                        obj.boxOutline.Visible = false
+                    end
+                else
+                    if obj.boxOutline then obj.boxOutline:Remove() obj.boxOutline = nil end
+                end
+
+                -- Skeleton ESP
+                if skeletonEnabled and hasDrawing then
+                    local joints = {
+                        {"Head", "UpperTorso"},
+                        {"UpperTorso", "LowerTorso"},
+                        {"UpperTorso", "LeftUpperArm"},
+                        {"LeftUpperArm", "LeftLowerArm"},
+                        {"LeftLowerArm", "LeftHand"},
+                        {"UpperTorso", "RightUpperArm"},
+                        {"RightUpperArm", "RightLowerArm"},
+                        {"RightLowerArm", "RightHand"},
+                        {"LowerTorso", "LeftUpperLeg"},
+                        {"LeftUpperLeg", "LeftLowerLeg"},
+                        {"LeftLowerLeg", "LeftFoot"},
+                        {"LowerTorso", "RightUpperLeg"},
+                        {"RightUpperLeg", "RightLowerLeg"},
+                        {"RightLowerLeg", "RightFoot"},
+                    }
+                    -- R6 fallback
+                    local isR15 = char:FindFirstChild("UpperTorso") ~= nil
+                    if not isR15 then
+                        joints = {
+                            {"Head", "Torso"},
+                            {"Torso", "Left Arm"},
+                            {"Torso", "Right Arm"},
+                            {"Torso", "Left Leg"},
+                            {"Torso", "Right Leg"},
+                        }
+                    end
+
+                    if not obj.skeleton then
+                        obj.skeleton = {}
+                    end
+
+                    for i, joint in ipairs(joints) do
+                        if not obj.skeleton[i] then
+                            local line = Drawing.new("Line")
+                            line.Visible = false
+                            line.Color = skeletonColor
+                            line.Thickness = 1
+                            line.Transparency = 0.9
+                            obj.skeleton[i] = line
+                        end
+
+                        local part1 = char:FindFirstChild(joint[1])
+                        local part2 = char:FindFirstChild(joint[2])
+                        if part1 and part2 then
+                            local p1, onScreen1 = Camera:WorldToViewportPoint(part1.Position)
+                            local p2, onScreen2 = Camera:WorldToViewportPoint(part2.Position)
+                            if onScreen1 and onScreen2 then
+                                obj.skeleton[i].From = Vector2.new(p1.X, p1.Y)
+                                obj.skeleton[i].To = Vector2.new(p2.X, p2.Y)
+                                obj.skeleton[i].Color = skeletonColor
+                                obj.skeleton[i].Visible = true
+                            else
+                                obj.skeleton[i].Visible = false
+                            end
+                        else
+                            obj.skeleton[i].Visible = false
+                        end
+                    end
+
+                    -- Remove extra lines if joint count changed
+                    for i = #joints + 1, #obj.skeleton do
+                        if obj.skeleton[i] then
+                            obj.skeleton[i]:Remove()
+                            obj.skeleton[i] = nil
+                        end
+                    end
+                else
+                    if obj.skeleton then
+                        for _, line in pairs(obj.skeleton) do
+                            line:Remove()
+                        end
+                        obj.skeleton = nil
+                    end
+                end
+
             else
                 if obj.billboard then obj.billboard:Destroy() obj.billboard = nil end
                 if obj.highlight then obj.highlight:Destroy() obj.highlight = nil end
@@ -1100,6 +1629,12 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                 if obj.trailAttach0 then obj.trailAttach0:Destroy() obj.trailAttach0 = nil end
                 if obj.trailAttach1 then obj.trailAttach1:Destroy() obj.trailAttach1 = nil end
                 if obj.chams then obj.chams:Destroy() obj.chams = nil end
+                if obj.tracer then obj.tracer:Remove() obj.tracer = nil end
+                if obj.boxOutline then obj.boxOutline:Remove() obj.boxOutline = nil end
+                if obj.skeleton then
+                    for _, line in pairs(obj.skeleton) do line:Remove() end
+                    obj.skeleton = nil
+                end
             end
         end
     end
@@ -1112,6 +1647,11 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
             if obj.trailAttach0 then obj.trailAttach0:Destroy() end
             if obj.trailAttach1 then obj.trailAttach1:Destroy() end
             if obj.chams then obj.chams:Destroy() end
+            if obj.tracer then obj.tracer:Remove() end
+            if obj.boxOutline then obj.boxOutline:Remove() end
+            if obj.skeleton then
+                for _, line in pairs(obj.skeleton) do line:Remove() end
+            end
             espObjects[player] = nil
         end
     end
@@ -1135,6 +1675,7 @@ CloseButton.MouseButton1Click:Connect(function()
     scriptActive = false
     camLockEnabled = false
     lockedTarget = nil
+    if fovCircle then fovCircle:Remove() end
     for _, obj in pairs(espObjects) do
         if obj.billboard then obj.billboard:Destroy() end
         if obj.highlight then obj.highlight:Destroy() end
@@ -1142,6 +1683,11 @@ CloseButton.MouseButton1Click:Connect(function()
         if obj.trailAttach0 then obj.trailAttach0:Destroy() end
         if obj.trailAttach1 then obj.trailAttach1:Destroy() end
         if obj.chams then obj.chams:Destroy() end
+        if obj.tracer then obj.tracer:Remove() end
+        if obj.boxOutline then obj.boxOutline:Remove() end
+        if obj.skeleton then
+            for _, line in pairs(obj.skeleton) do line:Remove() end
+        end
     end
     espObjects = {}
     for _, player in ipairs(Players:GetPlayers()) do
@@ -1165,4 +1711,99 @@ CloseButton.MouseButton1Click:Connect(function()
         conn:Disconnect()
     end
     ScreenGui:Destroy()
+end)
+
+-- ═══════════════════════════════════════
+-- MOBILE SUPPORT
+-- ═══════════════════════════════════════
+if isMobile then
+    -- Lock/Unlock floating button
+    local LockButton = Instance.new("TextButton", ScreenGui)
+    LockButton.Name = "MobileLockBtn"
+    LockButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+    LockButton.BorderSizePixel = 0
+    LockButton.Position = UDim2.new(1, -70, 0.5, -25)
+    LockButton.Size = UDim2.new(0, 55, 0, 50)
+    LockButton.Font = Enum.Font.GothamBold
+    LockButton.Text = "LOCK"
+    LockButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    LockButton.TextSize = 10
+    LockButton.Active = true
+    LockButton.Draggable = true
+    local lbCorner = Instance.new("UICorner", LockButton)
+    lbCorner.CornerRadius = UDim.new(0, 8)
+    local lbStroke = Instance.new("UIStroke", LockButton)
+    lbStroke.Color = Color3.fromRGB(50, 50, 50)
+    lbStroke.Thickness = 1
+
+    LockButton.MouseButton1Click:Connect(function()
+        if lockedTarget then
+            if lockFeedbackEnabled then
+                local name = (espNameMode == "Display") and lockedTarget.DisplayName or lockedTarget.Name
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Unlocked",
+                    Text = "You Unlocked From " .. name,
+                    Duration = 2
+                })
+            end
+            if hitboxEnabled and lockedTarget.Character then
+                local root = lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    root.Size = Vector3.new(2, 2, 1)
+                    root.Transparency = 1
+                    root.CanCollide = false
+                    root.Material = Enum.Material.SmoothPlastic
+                end
+            end
+            lockedTarget = nil
+            LockButton.Text = "LOCK"
+            LockButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+        else
+            local target = getClosestPlayerToCursor()
+            if target then
+                lockedTarget = target
+                LockButton.Text = "UNLOCK"
+                LockButton.BackgroundColor3 = Color3.fromRGB(35, 90, 35)
+                if lockFeedbackEnabled then
+                    local name = (espNameMode == "Display") and target.DisplayName or target.Name
+                    game:GetService("StarterGui"):SetCore("SendNotification", {
+                        Title = "Locked",
+                        Text = "You Locked Onto " .. name,
+                        Duration = 2
+                    })
+                end
+            end
+        end
+    end)
+
+    -- Update lock button text when target dies
+    table.insert(connections, RunService.Heartbeat:Connect(function()
+        if not lockedTarget and LockButton.Text == "UNLOCK" then
+            LockButton.Text = "LOCK"
+            LockButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+        end
+    end))
+end
+
+-- GUI toggle button (always visible, left middle of screen)
+local ToggleBtn = Instance.new("TextButton", ScreenGui)
+ToggleBtn.Name = "GuiToggleBtn"
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+ToggleBtn.BorderSizePixel = 0
+ToggleBtn.Position = UDim2.new(0, 10, 0.5, -20)
+ToggleBtn.Size = UDim2.new(0, 40, 0, 40)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Text = "V"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.TextSize = 14
+ToggleBtn.Active = true
+ToggleBtn.Draggable = isMobile
+local tbCorner = Instance.new("UICorner", ToggleBtn)
+tbCorner.CornerRadius = UDim.new(0, 8)
+local tbStroke = Instance.new("UIStroke", ToggleBtn)
+tbStroke.Color = Color3.fromRGB(50, 50, 50)
+tbStroke.Thickness = 1
+
+ToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
 end)
