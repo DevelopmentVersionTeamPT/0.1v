@@ -7,8 +7,9 @@ local GuiService = game:GetService("GuiService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+-- Mobile detection
 local isMobile = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
-local hasDrawing = (typeof(Drawing) == "table" and Drawing.new ~= nil)
+local hasDrawing = pcall(function() return Drawing and Drawing.new end) and typeof(Drawing) == "table"
 
 if CoreGui:FindFirstChild("VoidLockUI") then
     CoreGui:FindFirstChild("VoidLockUI"):Destroy()
@@ -18,7 +19,7 @@ local camLockEnabled = false
 local hitboxEnabled = false
 local hitboxVisible = false
 local hitboxShape = "Box" 
-local targetMode = "Head" 
+local targetMode = "Head"
 local lockedTarget = nil
 local HITBOX_SIZE = Vector3.new(6, 6, 6)
 local LOCK_KEYBIND = Enum.KeyCode.Q
@@ -39,7 +40,8 @@ local skeletonEnabled = false
 local skeletonColor = Color3.fromRGB(255, 255, 255)
 local boxEspEnabled = false
 local boxEspColor = Color3.fromRGB(255, 255, 255)
-local distanceEnabled = false
+local headDotEnabled = false
+local headDotColor = Color3.fromRGB(255, 255, 255)
 local rainbowTrailEnabled = false
 local tracersEnabled = false
 local autoRelockEnabled = false
@@ -47,9 +49,33 @@ local fovCircleEnabled = false
 local fovCircleColor = Color3.fromRGB(255, 255, 255)
 local fovRadius = 100
 
+-- Rainbow state for color options
+local rainbowHighlight = false
+local rainbowChams = false
+local rainbowTracer = false
+local rainbowBox = false
+local rainbowSkeleton = false
+local rainbowHeadDot = false
+local rainbowFov = false
+
 local fullbrightEnabled = false
 local noFogEnabled = false
 local originalLighting = {}
+
+-- Movement
+local speedEnabled = false
+local defaultSpeed = 16
+local sprintEnabled = false
+local sprintSpeed = 32
+local sprintKeybind = Enum.KeyCode.LeftShift
+local waitingForSprintKeybind = false
+local isSprinting = false
+local jumpPowerEnabled = false
+local defaultJumpPower = 50
+local infiniteJumpEnabled = false
+local noclipEnabled = false
+local originalWalkSpeed = 16
+local originalJumpPower = 50
 
 local themes = {
     Black = {
@@ -210,19 +236,6 @@ local ScreenGui = Instance.new("ScreenGui", CoreGui)
 ScreenGui.Name = "VoidLockUI"
 ScreenGui.ResetOnSpawn = false
 
--- Watermark
-local Watermark = Instance.new("TextLabel", ScreenGui)
-Watermark.BackgroundTransparency = 1
-Watermark.Position = UDim2.new(1, -80, 0, 10)
-Watermark.Size = UDim2.new(0, 70, 0, 22)
-Watermark.Font = Enum.Font.GothamBold
-Watermark.Text = "Void"
-Watermark.TextColor3 = Color3.fromRGB(255, 255, 255)
-Watermark.TextSize = 16
-Watermark.TextXAlignment = Enum.TextXAlignment.Right
-Watermark.TextStrokeTransparency = 0.6
-Watermark.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-
 -- FOV Circle Drawing
 local fovCircle = nil
 if hasDrawing then
@@ -267,14 +280,19 @@ CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 CloseButton.TextSize = 13
 CloseButton.ZIndex = 2
 
-local TabBar = Instance.new("Frame", MainFrame)
+local TabBar = Instance.new("ScrollingFrame", MainFrame)
 TabBar.BackgroundTransparency = 1
 TabBar.Position = UDim2.new(0, 0, 0, 35)
 TabBar.Size = UDim2.new(1, 0, 0, 28)
+TabBar.ScrollBarThickness = 0
+TabBar.BorderSizePixel = 0
+TabBar.CanvasSize = UDim2.new(0, 0, 0, 0)
+TabBar.AutomaticCanvasSize = Enum.AutomaticSize.X
+TabBar.ScrollingDirection = Enum.ScrollingDirection.X
 
 local TabLayout = Instance.new("UIListLayout", TabBar)
 TabLayout.FillDirection = Enum.FillDirection.Horizontal
-TabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+TabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 TabLayout.Padding = UDim.new(0, 4)
 
 local ContentArea = Instance.new("Frame", MainFrame)
@@ -790,6 +808,7 @@ CreateToggle(tabs["Visuals"], 25, "ESP", false, function(state)
             if obj.skeleton then
                 for _, line in pairs(obj.skeleton) do line:Remove() end
             end
+            if obj.headDot then obj.headDot:Remove() end
         end
         espObjects = {}
     end
@@ -828,11 +847,7 @@ CreateToggle(tabs["Visuals"], 185, "Chams", false, function(state)
     end
 end)
 
-CreateToggle(tabs["Visuals"], 225, "Distance", false, function(state)
-    distanceEnabled = state
-end)
-
-CreateToggle(tabs["Visuals"], 265, "Tracers", false, function(state)
+CreateToggle(tabs["Visuals"], 225, "Tracers", false, function(state)
     tracersEnabled = state
     if not state then
         for _, obj in pairs(espObjects) do
@@ -864,35 +879,55 @@ CreateToggle(tabs["Visuals"], 345, "Skeleton", false, function(state)
     end
 end)
 
+CreateToggle(tabs["Visuals"], 385, "Head Dot", false, function(state)
+    headDotEnabled = state
+    if not state then
+        for _, obj in pairs(espObjects) do
+            if obj.headDot then pcall(function() obj.headDot:Remove() end) obj.headDot = nil end
+        end
+    end
+end)
+
 -- ═══════════════════════════════════════
 -- COLORS SUB-CATEGORY
 -- ═══════════════════════════════════════
-CreateSectionHeader(tabs["Visuals"], 390, "Colors")
+CreateSectionHeader(tabs["Visuals"], 430, "Colors")
 
-CreateCycle(tabs["Visuals"], 410, "Health Color", {"Green", "White", "Red", "Yellow", "Blue"}, "Green", function(val)
-    local colors = {
-        Green = Color3.fromRGB(180, 255, 180),
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 100, 100),
-        Yellow = Color3.fromRGB(255, 255, 100),
-        Blue = Color3.fromRGB(100, 180, 255)
-    }
-    espHealthColor = colors[val] or Color3.fromRGB(180, 255, 180)
+local rainbowHealth = false
+CreateCycle(tabs["Visuals"], 450, "Health Color", {"Green", "White", "Red", "Yellow", "Blue", "Rainbow"}, "Green", function(val)
+    if val == "Rainbow" then
+        rainbowHealth = true
+    else
+        rainbowHealth = false
+        local colors = {
+            Green = Color3.fromRGB(180, 255, 180),
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 100, 100),
+            Yellow = Color3.fromRGB(255, 255, 100),
+            Blue = Color3.fromRGB(100, 180, 255)
+        }
+        espHealthColor = colors[val] or Color3.fromRGB(180, 255, 180)
+    end
 end)
 
-CreateCycle(tabs["Visuals"], 450, "Highlight Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow"}, "White", function(val)
-    local colors = {
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 50, 50),
-        Green = Color3.fromRGB(50, 255, 50),
-        Blue = Color3.fromRGB(50, 100, 255),
-        Purple = Color3.fromRGB(180, 50, 255),
-        Yellow = Color3.fromRGB(255, 255, 50)
-    }
-    highlightColor = colors[val] or Color3.fromRGB(255, 255, 255)
+CreateCycle(tabs["Visuals"], 490, "Highlight Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Rainbow"}, "White", function(val)
+    if val == "Rainbow" then
+        rainbowHighlight = true
+    else
+        rainbowHighlight = false
+        local colors = {
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 50, 50),
+            Green = Color3.fromRGB(50, 255, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Purple = Color3.fromRGB(180, 50, 255),
+            Yellow = Color3.fromRGB(255, 255, 50)
+        }
+        highlightColor = colors[val] or Color3.fromRGB(255, 255, 255)
+    end
 end)
 
-CreateCycle(tabs["Visuals"], 490, "Trail Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+CreateCycle(tabs["Visuals"], 530, "Trail Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
     if val == "Rainbow" then
         rainbowTrailEnabled = true
     else
@@ -910,72 +945,449 @@ CreateCycle(tabs["Visuals"], 490, "Trail Color", {"White", "Red", "Green", "Blue
     end
 end)
 
-CreateCycle(tabs["Visuals"], 530, "Chams Color", {"Red", "Blue", "Green", "Purple", "White", "Yellow"}, "Red", function(val)
-    local colors = {
-        Red = Color3.fromRGB(255, 50, 50),
-        Blue = Color3.fromRGB(50, 100, 255),
-        Green = Color3.fromRGB(50, 255, 50),
-        Purple = Color3.fromRGB(180, 50, 255),
-        White = Color3.fromRGB(255, 255, 255),
-        Yellow = Color3.fromRGB(255, 255, 50)
-    }
-    chamsColor = colors[val] or Color3.fromRGB(255, 50, 50)
+CreateCycle(tabs["Visuals"], 570, "Chams Color", {"Red", "Blue", "Green", "Purple", "White", "Yellow", "Rainbow"}, "Red", function(val)
+    if val == "Rainbow" then
+        rainbowChams = true
+    else
+        rainbowChams = false
+        local colors = {
+            Red = Color3.fromRGB(255, 50, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Green = Color3.fromRGB(50, 255, 50),
+            Purple = Color3.fromRGB(180, 50, 255),
+            White = Color3.fromRGB(255, 255, 255),
+            Yellow = Color3.fromRGB(255, 255, 50)
+        }
+        chamsColor = colors[val] or Color3.fromRGB(255, 50, 50)
+    end
 end)
 
 local tracerColor = Color3.fromRGB(255, 255, 255)
-CreateCycle(tabs["Visuals"], 570, "Tracer Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
-    local colors = {
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 50, 50),
-        Green = Color3.fromRGB(50, 255, 50),
-        Blue = Color3.fromRGB(50, 100, 255),
-        Purple = Color3.fromRGB(180, 50, 255),
-        Yellow = Color3.fromRGB(255, 255, 50),
-        Pink = Color3.fromRGB(255, 100, 180)
-    }
-    tracerColor = colors[val] or Color3.fromRGB(255, 255, 255)
+CreateCycle(tabs["Visuals"], 610, "Tracer Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+    if val == "Rainbow" then
+        rainbowTracer = true
+    else
+        rainbowTracer = false
+        local colors = {
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 50, 50),
+            Green = Color3.fromRGB(50, 255, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Purple = Color3.fromRGB(180, 50, 255),
+            Yellow = Color3.fromRGB(255, 255, 50),
+            Pink = Color3.fromRGB(255, 100, 180)
+        }
+        tracerColor = colors[val] or Color3.fromRGB(255, 255, 255)
+    end
 end)
 
-CreateCycle(tabs["Visuals"], 610, "FOV Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
-    local colors = {
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 50, 50),
-        Green = Color3.fromRGB(50, 255, 50),
-        Blue = Color3.fromRGB(50, 100, 255),
-        Purple = Color3.fromRGB(180, 50, 255),
-        Yellow = Color3.fromRGB(255, 255, 50),
-        Pink = Color3.fromRGB(255, 100, 180)
-    }
-    fovCircleColor = colors[val] or Color3.fromRGB(255, 255, 255)
+CreateCycle(tabs["Visuals"], 650, "FOV Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+    if val == "Rainbow" then
+        rainbowFov = true
+    else
+        rainbowFov = false
+        local colors = {
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 50, 50),
+            Green = Color3.fromRGB(50, 255, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Purple = Color3.fromRGB(180, 50, 255),
+            Yellow = Color3.fromRGB(255, 255, 50),
+            Pink = Color3.fromRGB(255, 100, 180)
+        }
+        fovCircleColor = colors[val] or Color3.fromRGB(255, 255, 255)
+    end
 end)
 
-CreateCycle(tabs["Visuals"], 650, "Box Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
-    local colors = {
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 50, 50),
-        Green = Color3.fromRGB(50, 255, 50),
-        Blue = Color3.fromRGB(50, 100, 255),
-        Purple = Color3.fromRGB(180, 50, 255),
-        Yellow = Color3.fromRGB(255, 255, 50),
-        Pink = Color3.fromRGB(255, 100, 180)
-    }
-    boxEspColor = colors[val] or Color3.fromRGB(255, 255, 255)
+CreateCycle(tabs["Visuals"], 690, "Box Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+    if val == "Rainbow" then
+        rainbowBox = true
+    else
+        rainbowBox = false
+        local colors = {
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 50, 50),
+            Green = Color3.fromRGB(50, 255, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Purple = Color3.fromRGB(180, 50, 255),
+            Yellow = Color3.fromRGB(255, 255, 50),
+            Pink = Color3.fromRGB(255, 100, 180)
+        }
+        boxEspColor = colors[val] or Color3.fromRGB(255, 255, 255)
+    end
 end)
 
-CreateCycle(tabs["Visuals"], 690, "Skeleton Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink"}, "White", function(val)
-    local colors = {
-        White = Color3.fromRGB(255, 255, 255),
-        Red = Color3.fromRGB(255, 50, 50),
-        Green = Color3.fromRGB(50, 255, 50),
-        Blue = Color3.fromRGB(50, 100, 255),
-        Purple = Color3.fromRGB(180, 50, 255),
-        Yellow = Color3.fromRGB(255, 255, 50),
-        Pink = Color3.fromRGB(255, 100, 180)
-    }
-    skeletonColor = colors[val] or Color3.fromRGB(255, 255, 255)
+CreateCycle(tabs["Visuals"], 730, "Skeleton Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+    if val == "Rainbow" then
+        rainbowSkeleton = true
+    else
+        rainbowSkeleton = false
+        local colors = {
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 50, 50),
+            Green = Color3.fromRGB(50, 255, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Purple = Color3.fromRGB(180, 50, 255),
+            Yellow = Color3.fromRGB(255, 255, 50),
+            Pink = Color3.fromRGB(255, 100, 180)
+        }
+        skeletonColor = colors[val] or Color3.fromRGB(255, 255, 255)
+    end
+end)
+
+CreateCycle(tabs["Visuals"], 770, "Head Dot Color", {"White", "Red", "Green", "Blue", "Purple", "Yellow", "Pink", "Rainbow"}, "White", function(val)
+    if val == "Rainbow" then
+        rainbowHeadDot = true
+    else
+        rainbowHeadDot = false
+        local colors = {
+            White = Color3.fromRGB(255, 255, 255),
+            Red = Color3.fromRGB(255, 50, 50),
+            Green = Color3.fromRGB(50, 255, 50),
+            Blue = Color3.fromRGB(50, 100, 255),
+            Purple = Color3.fromRGB(180, 50, 255),
+            Yellow = Color3.fromRGB(255, 255, 50),
+            Pink = Color3.fromRGB(255, 100, 180)
+        }
+        headDotColor = colors[val] or Color3.fromRGB(255, 255, 255)
+    end
 end)
 
 
+
+createTabButton("Movement")
+tabs["Movement"] = createTabContent()
+
+-- ═══════════════════════════════════════
+-- SPEED SUB-CATEGORY
+-- ═══════════════════════════════════════
+CreateSectionHeader(tabs["Movement"], 5, "Speed")
+
+CreateToggle(tabs["Movement"], 25, "Walk Speed", false, function(state)
+    speedEnabled = state
+    if LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            if state then
+                originalWalkSpeed = hum.WalkSpeed
+                hum.WalkSpeed = defaultSpeed
+            else
+                hum.WalkSpeed = originalWalkSpeed
+            end
+        end
+    end
+end)
+
+local speedContainer = Instance.new("Frame", tabs["Movement"])
+speedContainer.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+speedContainer.BorderColor3 = Color3.fromRGB(25, 25, 25)
+speedContainer.BorderSizePixel = 1
+speedContainer.Position = UDim2.new(0.5, -130, 0, 65)
+speedContainer.Size = UDim2.new(0, 260, 0, 32)
+local spdC = Instance.new("UICorner", speedContainer)
+spdC.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = speedContainer})
+
+local speedLbl = Instance.new("TextLabel", speedContainer)
+speedLbl.BackgroundTransparency = 1
+speedLbl.Position = UDim2.new(0, 10, 0, 0)
+speedLbl.Size = UDim2.new(0.45, 0, 1, 0)
+speedLbl.Font = Enum.Font.GothamBold
+speedLbl.Text = "Speed"
+speedLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedLbl.TextSize = 11
+speedLbl.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = speedLbl})
+
+local speedValue = Instance.new("TextLabel", speedContainer)
+speedValue.BackgroundTransparency = 1
+speedValue.Position = UDim2.new(0.45, 0, 0, 0)
+speedValue.Size = UDim2.new(0.2, 0, 1, 0)
+speedValue.Font = Enum.Font.GothamBold
+speedValue.Text = tostring(defaultSpeed)
+speedValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedValue.TextSize = 11
+speedValue.TextXAlignment = Enum.TextXAlignment.Center
+table.insert(themedElements, {type = "label", obj = speedValue})
+
+local speedMinus = Instance.new("TextButton", speedContainer)
+speedMinus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+speedMinus.BorderSizePixel = 0
+speedMinus.Position = UDim2.new(1, -80, 0.5, -10)
+speedMinus.Size = UDim2.new(0, 28, 0, 20)
+speedMinus.Font = Enum.Font.GothamBold
+speedMinus.Text = "-"
+speedMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedMinus.TextSize = 12
+local smC = Instance.new("UICorner", speedMinus)
+smC.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = speedMinus, isToggle = false})
+
+local speedPlus = Instance.new("TextButton", speedContainer)
+speedPlus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+speedPlus.BorderSizePixel = 0
+speedPlus.Position = UDim2.new(1, -42, 0.5, -10)
+speedPlus.Size = UDim2.new(0, 28, 0, 20)
+speedPlus.Font = Enum.Font.GothamBold
+speedPlus.Text = "+"
+speedPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedPlus.TextSize = 12
+local spC = Instance.new("UICorner", speedPlus)
+spC.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = speedPlus, isToggle = false})
+
+speedMinus.MouseButton1Click:Connect(function()
+    defaultSpeed = math.max(1, defaultSpeed - 2)
+    speedValue.Text = tostring(defaultSpeed)
+    if speedEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = defaultSpeed end
+    end
+end)
+
+speedPlus.MouseButton1Click:Connect(function()
+    defaultSpeed = math.min(200, defaultSpeed + 2)
+    speedValue.Text = tostring(defaultSpeed)
+    if speedEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = defaultSpeed end
+    end
+end)
+
+-- ═══════════════════════════════════════
+-- SPRINT SUB-CATEGORY
+-- ═══════════════════════════════════════
+CreateSectionHeader(tabs["Movement"], 110, "Sprint")
+
+CreateToggle(tabs["Movement"], 130, "Sprint", false, function(state)
+    sprintEnabled = state
+    if not state and isSprinting then
+        isSprinting = false
+        if LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = speedEnabled and defaultSpeed or originalWalkSpeed
+            end
+        end
+    end
+end)
+
+local sprintSpeedContainer = Instance.new("Frame", tabs["Movement"])
+sprintSpeedContainer.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+sprintSpeedContainer.BorderColor3 = Color3.fromRGB(25, 25, 25)
+sprintSpeedContainer.BorderSizePixel = 1
+sprintSpeedContainer.Position = UDim2.new(0.5, -130, 0, 170)
+sprintSpeedContainer.Size = UDim2.new(0, 260, 0, 32)
+local ssC = Instance.new("UICorner", sprintSpeedContainer)
+ssC.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = sprintSpeedContainer})
+
+local sprintLbl = Instance.new("TextLabel", sprintSpeedContainer)
+sprintLbl.BackgroundTransparency = 1
+sprintLbl.Position = UDim2.new(0, 10, 0, 0)
+sprintLbl.Size = UDim2.new(0.45, 0, 1, 0)
+sprintLbl.Font = Enum.Font.GothamBold
+sprintLbl.Text = "Sprint Speed"
+sprintLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+sprintLbl.TextSize = 11
+sprintLbl.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = sprintLbl})
+
+local sprintValue = Instance.new("TextLabel", sprintSpeedContainer)
+sprintValue.BackgroundTransparency = 1
+sprintValue.Position = UDim2.new(0.45, 0, 0, 0)
+sprintValue.Size = UDim2.new(0.2, 0, 1, 0)
+sprintValue.Font = Enum.Font.GothamBold
+sprintValue.Text = tostring(sprintSpeed)
+sprintValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+sprintValue.TextSize = 11
+sprintValue.TextXAlignment = Enum.TextXAlignment.Center
+table.insert(themedElements, {type = "label", obj = sprintValue})
+
+local sprintMinus = Instance.new("TextButton", sprintSpeedContainer)
+sprintMinus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+sprintMinus.BorderSizePixel = 0
+sprintMinus.Position = UDim2.new(1, -80, 0.5, -10)
+sprintMinus.Size = UDim2.new(0, 28, 0, 20)
+sprintMinus.Font = Enum.Font.GothamBold
+sprintMinus.Text = "-"
+sprintMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
+sprintMinus.TextSize = 12
+local spmC = Instance.new("UICorner", sprintMinus)
+spmC.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = sprintMinus, isToggle = false})
+
+local sprintPlus = Instance.new("TextButton", sprintSpeedContainer)
+sprintPlus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+sprintPlus.BorderSizePixel = 0
+sprintPlus.Position = UDim2.new(1, -42, 0.5, -10)
+sprintPlus.Size = UDim2.new(0, 28, 0, 20)
+sprintPlus.Font = Enum.Font.GothamBold
+sprintPlus.Text = "+"
+sprintPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
+sprintPlus.TextSize = 12
+local sppC = Instance.new("UICorner", sprintPlus)
+sppC.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = sprintPlus, isToggle = false})
+
+sprintMinus.MouseButton1Click:Connect(function()
+    sprintSpeed = math.max(10, sprintSpeed - 5)
+    sprintValue.Text = tostring(sprintSpeed)
+end)
+
+sprintPlus.MouseButton1Click:Connect(function()
+    sprintSpeed = math.min(300, sprintSpeed + 5)
+    sprintValue.Text = tostring(sprintSpeed)
+end)
+
+local sprintKbContainer = Instance.new("Frame", tabs["Movement"])
+sprintKbContainer.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+sprintKbContainer.BorderColor3 = Color3.fromRGB(25, 25, 25)
+sprintKbContainer.BorderSizePixel = 1
+sprintKbContainer.Position = UDim2.new(0.5, -130, 0, 210)
+sprintKbContainer.Size = UDim2.new(0, 260, 0, 32)
+local skC = Instance.new("UICorner", sprintKbContainer)
+skC.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = sprintKbContainer})
+
+local sprintKbLbl = Instance.new("TextLabel", sprintKbContainer)
+sprintKbLbl.BackgroundTransparency = 1
+sprintKbLbl.Position = UDim2.new(0, 10, 0, 0)
+sprintKbLbl.Size = UDim2.new(0.55, 0, 1, 0)
+sprintKbLbl.Font = Enum.Font.GothamBold
+sprintKbLbl.Text = "Sprint Key"
+sprintKbLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+sprintKbLbl.TextSize = 11
+sprintKbLbl.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = sprintKbLbl})
+
+local sprintKbBtn = Instance.new("TextButton", sprintKbContainer)
+sprintKbBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+sprintKbBtn.BorderSizePixel = 0
+sprintKbBtn.Position = UDim2.new(1, -55, 0.5, -10)
+sprintKbBtn.Size = UDim2.new(0, 45, 0, 20)
+sprintKbBtn.Font = Enum.Font.GothamBold
+sprintKbBtn.Text = "LShift"
+sprintKbBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+sprintKbBtn.TextSize = 9
+local skbC = Instance.new("UICorner", sprintKbBtn)
+skbC.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = sprintKbBtn, isToggle = false})
+
+sprintKbBtn.MouseButton1Click:Connect(function()
+    waitingForSprintKeybind = true
+    sprintKbBtn.Text = "..."
+end)
+
+-- ═══════════════════════════════════════
+-- JUMP SUB-CATEGORY
+-- ═══════════════════════════════════════
+CreateSectionHeader(tabs["Movement"], 255, "Jump")
+
+CreateToggle(tabs["Movement"], 275, "Jump Power", false, function(state)
+    jumpPowerEnabled = state
+    if LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            if state then
+                originalJumpPower = hum.JumpPower
+                hum.JumpPower = defaultJumpPower
+                hum.UseJumpPower = true
+            else
+                hum.JumpPower = originalJumpPower
+            end
+        end
+    end
+end)
+
+local jumpContainer = Instance.new("Frame", tabs["Movement"])
+jumpContainer.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+jumpContainer.BorderColor3 = Color3.fromRGB(25, 25, 25)
+jumpContainer.BorderSizePixel = 1
+jumpContainer.Position = UDim2.new(0.5, -130, 0, 315)
+jumpContainer.Size = UDim2.new(0, 260, 0, 32)
+local jC = Instance.new("UICorner", jumpContainer)
+jC.CornerRadius = UDim.new(0, 5)
+table.insert(themedElements, {type = "container", obj = jumpContainer})
+
+local jumpLbl = Instance.new("TextLabel", jumpContainer)
+jumpLbl.BackgroundTransparency = 1
+jumpLbl.Position = UDim2.new(0, 10, 0, 0)
+jumpLbl.Size = UDim2.new(0.45, 0, 1, 0)
+jumpLbl.Font = Enum.Font.GothamBold
+jumpLbl.Text = "Power"
+jumpLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+jumpLbl.TextSize = 11
+jumpLbl.TextXAlignment = Enum.TextXAlignment.Left
+table.insert(themedElements, {type = "label", obj = jumpLbl})
+
+local jumpValue = Instance.new("TextLabel", jumpContainer)
+jumpValue.BackgroundTransparency = 1
+jumpValue.Position = UDim2.new(0.45, 0, 0, 0)
+jumpValue.Size = UDim2.new(0.2, 0, 1, 0)
+jumpValue.Font = Enum.Font.GothamBold
+jumpValue.Text = tostring(defaultJumpPower)
+jumpValue.TextColor3 = Color3.fromRGB(255, 255, 255)
+jumpValue.TextSize = 11
+jumpValue.TextXAlignment = Enum.TextXAlignment.Center
+table.insert(themedElements, {type = "label", obj = jumpValue})
+
+local jumpMinus = Instance.new("TextButton", jumpContainer)
+jumpMinus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+jumpMinus.BorderSizePixel = 0
+jumpMinus.Position = UDim2.new(1, -80, 0.5, -10)
+jumpMinus.Size = UDim2.new(0, 28, 0, 20)
+jumpMinus.Font = Enum.Font.GothamBold
+jumpMinus.Text = "-"
+jumpMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
+jumpMinus.TextSize = 12
+local jmC = Instance.new("UICorner", jumpMinus)
+jmC.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = jumpMinus, isToggle = false})
+
+local jumpPlus = Instance.new("TextButton", jumpContainer)
+jumpPlus.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+jumpPlus.BorderSizePixel = 0
+jumpPlus.Position = UDim2.new(1, -42, 0.5, -10)
+jumpPlus.Size = UDim2.new(0, 28, 0, 20)
+jumpPlus.Font = Enum.Font.GothamBold
+jumpPlus.Text = "+"
+jumpPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
+jumpPlus.TextSize = 12
+local jpC = Instance.new("UICorner", jumpPlus)
+jpC.CornerRadius = UDim.new(0, 4)
+table.insert(themedElements, {type = "button", obj = jumpPlus, isToggle = false})
+
+jumpMinus.MouseButton1Click:Connect(function()
+    defaultJumpPower = math.max(10, defaultJumpPower - 5)
+    jumpValue.Text = tostring(defaultJumpPower)
+    if jumpPowerEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.JumpPower = defaultJumpPower end
+    end
+end)
+
+jumpPlus.MouseButton1Click:Connect(function()
+    defaultJumpPower = math.min(200, defaultJumpPower + 5)
+    jumpValue.Text = tostring(defaultJumpPower)
+    if jumpPowerEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.JumpPower = defaultJumpPower end
+    end
+end)
+
+CreateToggle(tabs["Movement"], 355, "Infinite Jump", false, function(state)
+    infiniteJumpEnabled = state
+end)
+
+-- ═══════════════════════════════════════
+-- OTHER SUB-CATEGORY
+-- ═══════════════════════════════════════
+CreateSectionHeader(tabs["Movement"], 400, "Other")
+
+CreateToggle(tabs["Movement"], 420, "Noclip", false, function(state)
+    noclipEnabled = state
+end)
 
 createTabButton("Settings")
 tabs["Settings"] = createTabContent()
@@ -1183,9 +1595,24 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
         return
     end
 
+    if waitingForSprintKeybind then
+        sprintKeybind = input.KeyCode
+        sprintKbBtn.Text = input.KeyCode.Name
+        waitingForSprintKeybind = false
+        return
+    end
+
     if input.KeyCode == GUI_TOGGLE_KEY then
         MainFrame.Visible = not MainFrame.Visible
         return
+    end
+
+    if sprintEnabled and input.KeyCode == sprintKeybind then
+        isSprinting = true
+        if LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = sprintSpeed end
+        end
     end
 
     if input.KeyCode == LOCK_KEYBIND then
@@ -1225,6 +1652,42 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
     end
 end))
 
+-- Sprint release
+table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    if sprintEnabled and input.KeyCode == sprintKeybind and isSprinting then
+        isSprinting = false
+        if LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = speedEnabled and defaultSpeed or originalWalkSpeed
+            end
+        end
+    end
+end))
+
+-- Infinite Jump
+table.insert(connections, UserInputService.JumpRequest:Connect(function()
+    if infiniteJumpEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end))
+
+-- Noclip
+table.insert(connections, RunService.Stepped:Connect(function()
+    if not scriptActive then return end
+    if noclipEnabled and LocalPlayer.Character then
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+end))
+
 table.insert(connections, RunService.RenderStepped:Connect(function()
     if not scriptActive then return end
 
@@ -1233,7 +1696,11 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
         local mousePos = UserInputService:GetMouseLocation()
         fovCircle.Position = Vector2.new(mousePos.X, mousePos.Y)
         fovCircle.Radius = fovRadius
-        fovCircle.Color = fovCircleColor
+        if rainbowFov then
+            fovCircle.Color = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
+        else
+            fovCircle.Color = fovCircleColor
+        end
         fovCircle.Visible = true
     elseif fovCircle then
         fovCircle.Visible = false
@@ -1363,7 +1830,11 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                         if espHealthEnabled then
                             healthLabel.Visible = true
                             healthLabel.Text = tostring(math.floor(hum.Health))
-                            healthLabel.TextColor3 = espHealthColor
+                            if rainbowHealth then
+                                healthLabel.TextColor3 = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
+                            else
+                                healthLabel.TextColor3 = espHealthColor
+                            end
                         else
                             healthLabel.Visible = false
                         end
@@ -1437,32 +1908,6 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                     obj.chams.FillColor = chamsColor
                 else
                     if obj.chams then obj.chams:Destroy() obj.chams = nil end
-                end
-
-                if distanceEnabled and obj.billboard then
-                    local distLabel = obj.billboard:FindFirstChild("DistLabel")
-                    if not distLabel then
-                        distLabel = Instance.new("TextLabel", obj.billboard)
-                        distLabel.Name = "DistLabel"
-                        distLabel.BackgroundTransparency = 1
-                        distLabel.Position = UDim2.new(0, 0, -0.5, 0)
-                        distLabel.Size = UDim2.new(1, 0, 0.35, 0)
-                        distLabel.Font = Enum.Font.Gotham
-                        distLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-                        distLabel.TextSize = 9
-                        distLabel.TextStrokeTransparency = 0.5
-                    end
-                    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                    if myRoot then
-                        local dist = math.floor((myRoot.Position - root.Position).Magnitude)
-                        distLabel.Text = "[" .. dist .. "m]"
-                        distLabel.Visible = true
-                    end
-                else
-                    if obj.billboard then
-                        local distLabel = obj.billboard:FindFirstChild("DistLabel")
-                        if distLabel then distLabel.Visible = false end
-                    end
                 end
 
                 if tracersEnabled and hasDrawing then
@@ -1622,36 +2067,94 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                     end
                 end
 
+                -- Head Dot
+                if headDotEnabled and hasDrawing then
+                    if not obj.headDot then
+                        local dot = Drawing.new("Circle")
+                        dot.Visible = false
+                        dot.Color = headDotColor
+                        dot.Thickness = 0
+                        dot.NumSides = 24
+                        dot.Radius = 4
+                        dot.Filled = true
+                        obj.headDot = dot
+                    end
+                    local headPart = char:FindFirstChild("Head")
+                    if headPart then
+                        local screenPos, onScreen = Camera:WorldToViewportPoint(headPart.Position)
+                        if onScreen then
+                            obj.headDot.Position = Vector2.new(screenPos.X, screenPos.Y)
+                            if rainbowHeadDot then
+                                obj.headDot.Color = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
+                            else
+                                obj.headDot.Color = headDotColor
+                            end
+                            obj.headDot.Visible = true
+                        else
+                            obj.headDot.Visible = false
+                        end
+                    else
+                        obj.headDot.Visible = false
+                    end
+                else
+                    if obj.headDot then pcall(function() obj.headDot:Remove() end) obj.headDot = nil end
+                end
+
+                -- Rainbow color updates
+                local hue = (tick() * 0.5) % 1
+                local rbColor = Color3.fromHSV(hue, 1, 1)
+
+                if rainbowHighlight and obj.highlight then
+                    obj.highlight.FillColor = rbColor
+                    obj.highlight.OutlineColor = rbColor
+                end
+                if rainbowChams and obj.chams then
+                    obj.chams.FillColor = rbColor
+                end
+                if rainbowTracer and obj.tracer then
+                    obj.tracer.Color = rbColor
+                end
+                if rainbowBox and obj.boxOutline then
+                    obj.boxOutline.Color = rbColor
+                end
+                if rainbowSkeleton and obj.skeleton then
+                    for _, line in pairs(obj.skeleton) do
+                        line.Color = rbColor
+                    end
+                end
+
             else
-                if obj.billboard then obj.billboard:Destroy() obj.billboard = nil end
-                if obj.highlight then obj.highlight:Destroy() obj.highlight = nil end
-                if obj.trail then obj.trail:Destroy() obj.trail = nil end
-                if obj.trailAttach0 then obj.trailAttach0:Destroy() obj.trailAttach0 = nil end
-                if obj.trailAttach1 then obj.trailAttach1:Destroy() obj.trailAttach1 = nil end
-                if obj.chams then obj.chams:Destroy() obj.chams = nil end
-                if obj.tracer then obj.tracer:Remove() obj.tracer = nil end
-                if obj.boxOutline then obj.boxOutline:Remove() obj.boxOutline = nil end
+                if obj.billboard then pcall(function() obj.billboard:Destroy() end) obj.billboard = nil end
+                if obj.highlight then pcall(function() obj.highlight:Destroy() end) obj.highlight = nil end
+                if obj.trail then pcall(function() obj.trail:Destroy() end) obj.trail = nil end
+                if obj.trailAttach0 then pcall(function() obj.trailAttach0:Destroy() end) obj.trailAttach0 = nil end
+                if obj.trailAttach1 then pcall(function() obj.trailAttach1:Destroy() end) obj.trailAttach1 = nil end
+                if obj.chams then pcall(function() obj.chams:Destroy() end) obj.chams = nil end
+                if obj.tracer then pcall(function() obj.tracer:Remove() end) obj.tracer = nil end
+                if obj.boxOutline then pcall(function() obj.boxOutline:Remove() end) obj.boxOutline = nil end
                 if obj.skeleton then
-                    for _, line in pairs(obj.skeleton) do line:Remove() end
+                    for _, line in pairs(obj.skeleton) do pcall(function() line:Remove() end) end
                     obj.skeleton = nil
                 end
+                if obj.headDot then pcall(function() obj.headDot:Remove() end) obj.headDot = nil end
             end
         end
     end
 
     for player, obj in pairs(espObjects) do
         if not player.Parent then
-            if obj.billboard then obj.billboard:Destroy() end
-            if obj.highlight then obj.highlight:Destroy() end
-            if obj.trail then obj.trail:Destroy() end
-            if obj.trailAttach0 then obj.trailAttach0:Destroy() end
-            if obj.trailAttach1 then obj.trailAttach1:Destroy() end
-            if obj.chams then obj.chams:Destroy() end
-            if obj.tracer then obj.tracer:Remove() end
-            if obj.boxOutline then obj.boxOutline:Remove() end
+            if obj.billboard then pcall(function() obj.billboard:Destroy() end) end
+            if obj.highlight then pcall(function() obj.highlight:Destroy() end) end
+            if obj.trail then pcall(function() obj.trail:Destroy() end) end
+            if obj.trailAttach0 then pcall(function() obj.trailAttach0:Destroy() end) end
+            if obj.trailAttach1 then pcall(function() obj.trailAttach1:Destroy() end) end
+            if obj.chams then pcall(function() obj.chams:Destroy() end) end
+            if obj.tracer then pcall(function() obj.tracer:Remove() end) end
+            if obj.boxOutline then pcall(function() obj.boxOutline:Remove() end) end
             if obj.skeleton then
-                for _, line in pairs(obj.skeleton) do line:Remove() end
+                for _, line in pairs(obj.skeleton) do pcall(function() line:Remove() end) end
             end
+            if obj.headDot then pcall(function() obj.headDot:Remove() end) end
             espObjects[player] = nil
         end
     end
@@ -1677,17 +2180,20 @@ CloseButton.MouseButton1Click:Connect(function()
     lockedTarget = nil
     if fovCircle then fovCircle:Remove() end
     for _, obj in pairs(espObjects) do
-        if obj.billboard then obj.billboard:Destroy() end
-        if obj.highlight then obj.highlight:Destroy() end
-        if obj.trail then obj.trail:Destroy() end
-        if obj.trailAttach0 then obj.trailAttach0:Destroy() end
-        if obj.trailAttach1 then obj.trailAttach1:Destroy() end
-        if obj.chams then obj.chams:Destroy() end
-        if obj.tracer then obj.tracer:Remove() end
-        if obj.boxOutline then obj.boxOutline:Remove() end
+        if obj.billboard then pcall(function() obj.billboard:Destroy() end) end
+        if obj.highlight then pcall(function() obj.highlight:Destroy() end) end
+        if obj.trail then pcall(function() obj.trail:Destroy() end) end
+        if obj.trailAttach0 then pcall(function() obj.trailAttach0:Destroy() end) end
+        if obj.trailAttach1 then pcall(function() obj.trailAttach1:Destroy() end) end
+        if obj.chams then pcall(function() obj.chams:Destroy() end) end
+        if obj.tracer then pcall(function() obj.tracer:Remove() end) end
+        if obj.boxOutline then pcall(function() obj.boxOutline:Remove() end) end
         if obj.skeleton then
-            for _, line in pairs(obj.skeleton) do line:Remove() end
+            for _, line in pairs(obj.skeleton) do
+                pcall(function() line:Remove() end)
+            end
         end
+        if obj.headDot then pcall(function() obj.headDot:Remove() end) end
     end
     espObjects = {}
     for _, player in ipairs(Players:GetPlayers()) do
@@ -1706,7 +2212,6 @@ CloseButton.MouseButton1Click:Connect(function()
     if originalLighting.OutdoorAmbient then Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient end
     if originalLighting.FogEnd then Lighting.FogEnd = originalLighting.FogEnd end
     if originalLighting.FogStart then Lighting.FogStart = originalLighting.FogStart end
-    espObjects = {}
     for _, conn in ipairs(connections) do
         conn:Disconnect()
     end
