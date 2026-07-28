@@ -51,6 +51,7 @@ local CombatBinds = {
     aim = Enum.KeyCode.Q,
     alk = Enum.KeyCode.T,
     rage = Enum.KeyCode.R,
+    trigger = Enum.KeyCode.G,
 }
 local ActiveExtras = {}
 local GameDetect = (function()
@@ -88,10 +89,14 @@ local GameDetect = (function()
         isOneTap = function()
             return game.PlaceId == 90568084448279
         end,
+        isLostFront = function()
+            return game.PlaceId == 102871156420149
+        end,
         name = function()
             if game.PlaceId == 286090429 or game.PlaceId == 2377868063 then return "Arsenal" end
             if game.PlaceId == 142823291 then return "Murder Mystery 2" end
             if game.PlaceId == 90568084448279 then return "One Tap" end
+            if game.PlaceId == 102871156420149 then return "The Lost Front" end
             if isRedliner() then return "Redliner" end
             return nil
         end,
@@ -161,6 +166,8 @@ local targetInfoEnabled = false
 local autoLockKillEnabled = false
 local autoLockKillDelay = 0.03
 local rageBotEnabled = false
+local triggerbotEnabled = false
+local triggerbotDelay = 0.05
 local camLockMode = "Auto" 
 local lockKeyHeld = false 
 local teamCheckEnabled = true 
@@ -168,26 +175,202 @@ local fovVisibleOnly = true
 local _respawnGrace = 0 
 local _manualUnlockGrace = 0 
 
-local function isTeammate(player)
-    if not teamCheckEnabled then return false end
-    if typeof(player) ~= "Instance" or not player:IsA("Player") then return false end
-    if player == LocalPlayer then return true end
-    local myTeam = LocalPlayer.Team
-    local theirTeam = player.Team
-    if myTeam ~= nil and theirTeam ~= nil and myTeam == theirTeam then
-        return true
-    end
-    if myTeam ~= nil and theirTeam ~= nil then
+local H = (function()
+    local tmTagCache = {}
+    local lostFrontMateSet = {}
+    local lostFrontMateScanAt = 0
+    local aimVisCache = {}
+    local OFFSCREEN2 = Vector2.new(-10000, -10000)
+
+    local GUI_SKIP = {
+        VoidESP = true, VoidHighlight = true, VoidChams = true,
+        TeamESPHighlight = true, FriendESPHighlight = true, TargetESPHighlight = true,
+        PlayerVisualChams = true, PlayerVisualHighlight = true,
+        NPCVoidHighlight = true, NPCVoidChams = true, NPCVoidESP = true, TwilightUI = true,
+    }
+
+    local function isGreenTeamColor(c)
+        if typeof(c) ~= "Color3" then return false end
+        local h, s, v = Color3.toHSV(c)
+        if s >= 0.2 and v >= 0.25 and h >= 0.18 and h <= 0.55 then return true end
+        if c.G >= 0.3 and c.G >= c.R and c.G >= c.B and (c.G - math.max(c.R, c.B)) >= 0.05 then return true end
         return false
     end
-    
-    if LocalPlayer.Neutral == false and player.Neutral == false then
-        if LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then
-            return true
+
+    local function stripRichText(s)
+        if typeof(s) ~= "string" then return "" end
+        local clean = s:gsub("<[^>]+>", ""):gsub("%s+", " ")
+        return clean:match("^%s*(.-)%s*$") or clean
+    end
+
+    local function namesMatch(text, player)
+        local t = string.lower(stripRichText(text))
+        if t == "" then return false end
+        local user = string.lower(player.Name or "")
+        local display = string.lower(player.DisplayName or "")
+        for _, n in ipairs({user, display}) do
+            if n ~= "" then
+                if t == n or string.find(t, n, 1, true) then return true end
+                if #t >= 3 and string.find(n, t, 1, true) then return true end
+            end
+        end
+        return false
+    end
+
+    local function labelIsGreen(lbl)
+        if not (lbl:IsA("TextLabel") or lbl:IsA("TextButton") or lbl:IsA("TextBox")) then return false end
+        if (lbl.TextTransparency or 0) > 0.9 then return false end
+        if isGreenTeamColor(lbl.TextColor3) then return true end
+        local stroke = lbl:FindFirstChildOfClass("UIStroke")
+        return stroke and (stroke.Transparency or 0) < 0.9 and isGreenTeamColor(stroke.Color)
+    end
+
+    local function playerFromAdornee(adornee)
+        if not adornee then return nil end
+        if adornee:IsA("Player") then return adornee end
+        local model = adornee:IsA("Model") and adornee or adornee:FindFirstAncestorOfClass("Model")
+        return model and Players:GetPlayerFromCharacter(model) or nil
+    end
+
+    local function refreshLostFrontMates()
+        local now = tick()
+        if now - lostFrontMateScanAt < 0.4 then return end
+        lostFrontMateScanAt = now
+        for k in pairs(lostFrontMateSet) do lostFrontMateSet[k] = nil end
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return end
+        for _, bb in ipairs(pg:GetDescendants()) do
+            if bb:IsA("BillboardGui") and not GUI_SKIP[bb.Name] and bb.Enabled ~= false then
+                local plr = playerFromAdornee(bb.Adornee)
+                if plr and plr ~= LocalPlayer then
+                    local greenHit, nameHit = false, false
+                    for _, d in ipairs(bb:GetDescendants()) do
+                        if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                            if labelIsGreen(d) then
+                                greenHit = true
+                                if namesMatch(d.Text, plr) then nameHit = true break end
+                            end
+                        end
+                    end
+                    if nameHit or greenHit then lostFrontMateSet[plr] = true end
+                end
+            end
         end
     end
-    return false
-end
+
+    local api = {}
+
+    function api.isTeammate(player)
+        if not teamCheckEnabled then return false end
+        if typeof(player) ~= "Instance" or not player:IsA("Player") then return false end
+        if player == LocalPlayer then return true end
+        if GameDetect.isLostFront() then
+            refreshLostFrontMates()
+            return lostFrontMateSet[player] == true
+        end
+        local cached = tmTagCache[player]
+        local now = tick()
+        if cached and cached.t > now then return cached.v end
+        local result = false
+        local myTeam, theirTeam = LocalPlayer.Team, player.Team
+        if myTeam and theirTeam then
+            result = (myTeam == theirTeam) or (myTeam.Name == theirTeam.Name)
+        elseif LocalPlayer.Neutral == false and player.Neutral == false then
+            local a, b = LocalPlayer.TeamColor, player.TeamColor
+            if a and b then result = (a == b) or (a.Name == b.Name) or (a.Number == b.Number) end
+        else
+            local myAttr = LocalPlayer:GetAttribute("Team") or LocalPlayer:GetAttribute("team")
+            local theirAttr = player:GetAttribute("Team") or player:GetAttribute("team")
+            if myAttr ~= nil and theirAttr ~= nil and myAttr == theirAttr then
+                result = true
+            else
+                local myChar, theirChar = LocalPlayer.Character, player.Character
+                if myChar and theirChar then
+                    local function readTeamVal(char)
+                        local v = char:GetAttribute("Team") or char:GetAttribute("team")
+                        if v ~= nil then return v end
+                        local obj = char:FindFirstChild("Team") or char:FindFirstChild("team")
+                        if obj and obj:IsA("ValueBase") then return obj.Value end
+                        return nil
+                    end
+                    local a, b = readTeamVal(myChar), readTeamVal(theirChar)
+                    if a ~= nil and b ~= nil and a == b then result = true end
+                end
+            end
+        end
+        tmTagCache[player] = {t = now + 0.5, v = result}
+        return result
+    end
+
+    function api.hideQuad(q)
+        if not q then return end
+        pcall(function()
+            q.Visible = false
+            q.PointA = OFFSCREEN2; q.PointB = OFFSCREEN2; q.PointC = OFFSCREEN2; q.PointD = OFFSCREEN2
+        end)
+    end
+
+    function api.hideLine(l)
+        if not l then return end
+        pcall(function()
+            l.Visible = false
+            l.From = OFFSCREEN2; l.To = OFFSCREEN2
+        end)
+    end
+
+    function api.worldToScreen2(pos)
+        local cam = workspace.CurrentCamera or Camera
+        if not cam then return nil end
+        local v, onScreen = cam:WorldToViewportPoint(pos)
+        if not onScreen or v.Z <= 0 then return nil end
+        return Vector2.new(v.X, v.Y)
+    end
+
+    function api.wipeEspDrawings(obj)
+        if not obj then return end
+        if obj.tracer then pcall(function() obj.tracer:Remove() end) obj.tracer = nil end
+        if obj.boxOutline then pcall(function() obj.boxOutline:Remove() end) obj.boxOutline = nil end
+        if obj.box then pcall(function() obj.box:Remove() end) obj.box = nil end
+        if obj.headDot then pcall(function() obj.headDot:Remove() end) obj.headDot = nil end
+        if obj.headdot then pcall(function() obj.headdot:Remove() end) obj.headdot = nil end
+        if obj.healthBar then pcall(function() obj.healthBar:Remove() end) obj.healthBar = nil end
+        if obj.healthBarBg then pcall(function() obj.healthBarBg:Remove() end) obj.healthBarBg = nil end
+        if obj.skeleton then for _, line in pairs(obj.skeleton) do pcall(function() line:Remove() end) end obj.skeleton = nil end
+        if obj.box3d then for _, line in pairs(obj.box3d) do pcall(function() line:Remove() end) end obj.box3d = nil end
+        if obj.cornerBox then for _, line in pairs(obj.cornerBox) do pcall(function() line:Remove() end) end obj.cornerBox = nil end
+    end
+
+    function api.isCharVisibleFast(char, myChar)
+        if not char or not myChar then return false end
+        local now = tick()
+        local cached = aimVisCache[char]
+        if cached and (now - cached.t) < 0.1 then return cached.v end
+        local cam = workspace.CurrentCamera or Camera
+        if not cam then return false end
+        local camPos = cam.CFrame.Position
+        local part = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+        if not part then aimVisCache[char] = {t = now, v = false} return false end
+        local to = part.Position - camPos
+        local dist = to.Magnitude
+        if dist <= 4 then aimVisCache[char] = {t = now, v = true} return true end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {myChar, char}
+        params.IgnoreWater = true
+        local hit = workspace:Raycast(camPos, to.Unit * (dist - 1), params)
+        local ok = hit == nil
+        aimVisCache[char] = {t = now, v = ok}
+        return ok
+    end
+
+    table.insert(connections, Players.PlayerRemoving:Connect(function(player)
+        tmTagCache[player] = nil
+        lostFrontMateSet[player] = nil
+        aimVisCache[player] = nil
+    end))
+
+    return api
+end)()
 
 local fovCircleEnabled = false
 local fovCircleColor = Color3.fromRGB(255, 255, 255)
@@ -243,75 +426,109 @@ end
 
 local playTwilightLoader = (function()
     local TweenService = game:GetService("TweenService")
+    local SCRIPT_VERSION = "2.5"
+
     local Loader = Instance.new("Frame", ScreenGui)
     Loader.Name = "TwilightLoader"
-    Loader.BackgroundColor3 = Color3.fromRGB(8, 8, 9)
+    Loader.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
     Loader.BorderSizePixel = 0
     Loader.Size = UDim2.new(1, 0, 1, 0)
     Loader.ZIndex = 200
     Loader.Active = true
 
-    local loaderBrand = Instance.new("TextLabel", Loader)
+    local bgGlow = Instance.new("Frame", Loader)
+    bgGlow.BackgroundColor3 = Color3.fromRGB(28, 30, 34)
+    bgGlow.BorderSizePixel = 0
+    bgGlow.AnchorPoint = Vector2.new(0.5, 0.5)
+    bgGlow.Position = UDim2.new(0.5, 0, 0.42, 0)
+    bgGlow.Size = UDim2.new(0, 520, 0, 320)
+    bgGlow.BackgroundTransparency = 1
+    bgGlow.ZIndex = 200
+    Instance.new("UICorner", bgGlow).CornerRadius = UDim.new(1, 0)
+    do
+        local g = Instance.new("UIGradient", bgGlow)
+        g.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.55),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+    end
+
+    local center = Instance.new("Frame", Loader)
+    center.BackgroundTransparency = 1
+    center.AnchorPoint = Vector2.new(0.5, 0.5)
+    center.Position = UDim2.new(0.5, 0, 0.48, 0)
+    center.Size = UDim2.new(0, 320, 0, 140)
+    center.ZIndex = 201
+
+    local loaderBrand = Instance.new("TextLabel", center)
     loaderBrand.BackgroundTransparency = 1
-    loaderBrand.AnchorPoint = Vector2.new(0.5, 0.5)
-    loaderBrand.Position = UDim2.new(0.5, 0, 0.46, 8)
-    loaderBrand.Size = UDim2.new(0, 280, 0, 36)
+    loaderBrand.Position = UDim2.new(0, 0, 0, 0)
+    loaderBrand.Size = UDim2.new(1, 0, 0, 44)
     loaderBrand.Font = Enum.Font.GothamBold
     loaderBrand.Text = "Twilight"
     loaderBrand.TextColor3 = Color3.fromRGB(245, 245, 245)
-    loaderBrand.TextSize = 28
+    loaderBrand.TextSize = 34
     loaderBrand.TextTransparency = 1
-    loaderBrand.ZIndex = 201
+    loaderBrand.ZIndex = 202
 
-    local loaderTrack = Instance.new("Frame", Loader)
-    loaderTrack.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+    local loaderVersion = Instance.new("TextLabel", center)
+    loaderVersion.BackgroundTransparency = 1
+    loaderVersion.Position = UDim2.new(0, 0, 0, 42)
+    loaderVersion.Size = UDim2.new(1, 0, 0, 18)
+    loaderVersion.Font = Enum.Font.Gotham
+    loaderVersion.Text = "Version " .. SCRIPT_VERSION
+    loaderVersion.TextColor3 = Color3.fromRGB(120, 122, 128)
+    loaderVersion.TextSize = 12
+    loaderVersion.TextTransparency = 1
+    loaderVersion.ZIndex = 202
+
+    local loaderTrack = Instance.new("Frame", center)
+    loaderTrack.BackgroundColor3 = Color3.fromRGB(32, 33, 36)
     loaderTrack.BorderSizePixel = 0
-    loaderTrack.AnchorPoint = Vector2.new(0.5, 0.5)
-    loaderTrack.Position = UDim2.new(0.5, 0, 0.46, 42)
-    loaderTrack.Size = UDim2.new(0, 160, 0, 2)
+    loaderTrack.AnchorPoint = Vector2.new(0.5, 0)
+    loaderTrack.Position = UDim2.new(0.5, 0, 0, 78)
+    loaderTrack.Size = UDim2.new(0, 180, 0, 3)
     loaderTrack.BackgroundTransparency = 1
-    loaderTrack.ZIndex = 201
+    loaderTrack.ZIndex = 202
+    Instance.new("UICorner", loaderTrack).CornerRadius = UDim.new(1, 0)
 
     local loaderFill = Instance.new("Frame", loaderTrack)
-    loaderFill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+    loaderFill.BackgroundColor3 = Color3.fromRGB(235, 235, 238)
     loaderFill.BorderSizePixel = 0
     loaderFill.Size = UDim2.new(0, 0, 1, 0)
-    loaderFill.ZIndex = 202
+    loaderFill.ZIndex = 203
+    Instance.new("UICorner", loaderFill).CornerRadius = UDim.new(1, 0)
 
-    local loaderStatus = Instance.new("TextLabel", Loader)
+    local loaderStatus = Instance.new("TextLabel", center)
     loaderStatus.BackgroundTransparency = 1
-    loaderStatus.AnchorPoint = Vector2.new(0.5, 0.5)
-    loaderStatus.Position = UDim2.new(0.5, 0, 0.46, 62)
-    loaderStatus.Size = UDim2.new(0, 240, 0, 16)
+    loaderStatus.Position = UDim2.new(0, 0, 0, 92)
+    loaderStatus.Size = UDim2.new(1, 0, 0, 18)
     loaderStatus.Font = Enum.Font.Gotham
     loaderStatus.Text = ""
-    loaderStatus.TextColor3 = Color3.fromRGB(120, 120, 120)
-    loaderStatus.TextSize = 11
+    loaderStatus.TextColor3 = Color3.fromRGB(140, 142, 148)
+    loaderStatus.TextSize = 12
     loaderStatus.TextTransparency = 1
-    loaderStatus.ZIndex = 201
+    loaderStatus.ZIndex = 202
 
     local skipBtn = Instance.new("TextButton", Loader)
-    skipBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+    skipBtn.BackgroundColor3 = Color3.fromRGB(245, 245, 245)
     skipBtn.BorderSizePixel = 0
-    skipBtn.AnchorPoint = Vector2.new(0.5, 0.5)
-    skipBtn.Position = UDim2.new(0.5, 0, 0.46, 96)
-    skipBtn.Size = UDim2.new(0, 72, 0, 26)
+    skipBtn.AnchorPoint = Vector2.new(0.5, 1)
+    skipBtn.Position = UDim2.new(0.5, 0, 1, -36)
+    skipBtn.Size = UDim2.new(0, 108, 0, 34)
     skipBtn.Font = Enum.Font.GothamBold
     skipBtn.Text = "Skip"
-    skipBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-    skipBtn.TextSize = 11
+    skipBtn.TextColor3 = Color3.fromRGB(18, 18, 20)
+    skipBtn.TextSize = 13
     skipBtn.TextTransparency = 1
     skipBtn.BackgroundTransparency = 1
     skipBtn.AutoButtonColor = false
-    skipBtn.ZIndex = 202
-    Instance.new("UICorner", skipBtn).CornerRadius = UDim.new(0, 5)
-    do
-        local s = Instance.new("UIStroke", skipBtn)
-        s.Color = Color3.fromRGB(45, 45, 48)
-        s.Thickness = 1
-        s.Transparency = 1
-        skipBtn:SetAttribute("Stroke", true)
-    end
+    skipBtn.ZIndex = 205
+    Instance.new("UICorner", skipBtn).CornerRadius = UDim.new(0, 7)
+    local skipStroke = Instance.new("UIStroke", skipBtn)
+    skipStroke.Color = Color3.fromRGB(255, 255, 255)
+    skipStroke.Thickness = 1
+    skipStroke.Transparency = 1
 
     local loaderReady = false
     local loaderSkipped = false
@@ -320,24 +537,36 @@ local playTwilightLoader = (function()
     skipBtn.MouseButton1Click:Connect(function()
         loaderSkipped = true
     end)
+    skipBtn.MouseEnter:Connect(function()
+        if skipBtn.BackgroundTransparency < 1 then
+            TweenService:Create(skipBtn, TweenInfo.new(0.12), {
+                BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+                Size = UDim2.new(0, 114, 0, 36),
+            }):Play()
+        end
+    end)
+    skipBtn.MouseLeave:Connect(function()
+        TweenService:Create(skipBtn, TweenInfo.new(0.12), {
+            BackgroundColor3 = Color3.fromRGB(245, 245, 245),
+            Size = UDim2.new(0, 108, 0, 34),
+        }):Play()
+    end)
 
     local function finishLoader()
         if loaderDone then return end
         loaderDone = true
-        TweenService:Create(loaderBrand, TweenInfo.new(0.28), {TextTransparency = 1}):Play()
-        TweenService:Create(loaderTrack, TweenInfo.new(0.28), {BackgroundTransparency = 1}):Play()
-        TweenService:Create(loaderFill, TweenInfo.new(0.28), {BackgroundTransparency = 1}):Play()
-        TweenService:Create(loaderStatus, TweenInfo.new(0.28), {TextTransparency = 1}):Play()
-        TweenService:Create(skipBtn, TweenInfo.new(0.28), {TextTransparency = 1, BackgroundTransparency = 1}):Play()
-        for _, d in ipairs(skipBtn:GetChildren()) do
-            if d:IsA("UIStroke") then
-                TweenService:Create(d, TweenInfo.new(0.28), {Transparency = 1}):Play()
-            end
-        end
-        local fade = TweenService:Create(Loader, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        local fadeInfo = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(loaderBrand, fadeInfo, {TextTransparency = 1}):Play()
+        TweenService:Create(loaderVersion, fadeInfo, {TextTransparency = 1}):Play()
+        TweenService:Create(loaderTrack, fadeInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(loaderFill, fadeInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(loaderStatus, fadeInfo, {TextTransparency = 1}):Play()
+        TweenService:Create(skipBtn, fadeInfo, {TextTransparency = 1, BackgroundTransparency = 1}):Play()
+        TweenService:Create(skipStroke, fadeInfo, {Transparency = 1}):Play()
+        TweenService:Create(bgGlow, fadeInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(Loader, TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
             BackgroundTransparency = 1,
-        })
-        fade:Play()
+        }):Play()
         task.wait(0.4)
         if Loader and Loader.Parent then Loader:Destroy() end
         if MainFrame and MainFrame.Parent then
@@ -349,20 +578,24 @@ local playTwilightLoader = (function()
         if loaderReady then return end
         loaderReady = true
 
-        TweenService:Create(loaderBrand, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            TextTransparency = 0,
-            Position = UDim2.new(0.5, 0, 0.46, 0),
+        TweenService:Create(bgGlow, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundTransparency = 0.15,
         }):Play()
-        task.wait(0.25)
+        TweenService:Create(loaderBrand, TweenInfo.new(0.55, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            TextTransparency = 0,
+        }):Play()
+        task.wait(0.16)
+        TweenService:Create(loaderVersion, TweenInfo.new(0.35), {TextTransparency = 0}):Play()
+        task.wait(0.1)
         if loaderSkipped then finishLoader() return end
-        TweenService:Create(loaderTrack, TweenInfo.new(0.3), {BackgroundTransparency = 0}):Play()
-        TweenService:Create(loaderStatus, TweenInfo.new(0.3), {TextTransparency = 0}):Play()
-        TweenService:Create(skipBtn, TweenInfo.new(0.3), {TextTransparency = 0, BackgroundTransparency = 0}):Play()
-        for _, d in ipairs(skipBtn:GetChildren()) do
-            if d:IsA("UIStroke") then
-                TweenService:Create(d, TweenInfo.new(0.3), {Transparency = 0}):Play()
-            end
-        end
+
+        TweenService:Create(loaderTrack, TweenInfo.new(0.28), {BackgroundTransparency = 0}):Play()
+        TweenService:Create(loaderStatus, TweenInfo.new(0.28), {TextTransparency = 0}):Play()
+        TweenService:Create(skipBtn, TweenInfo.new(0.3), {
+            TextTransparency = 0,
+            BackgroundTransparency = 0,
+        }):Play()
+        TweenService:Create(skipStroke, TweenInfo.new(0.3), {Transparency = 0.65}):Play()
 
         local steps = {
             {t = 0.22, text = "Preparing Interface"},
@@ -373,20 +606,20 @@ local playTwilightLoader = (function()
         for _, step in ipairs(steps) do
             if loaderSkipped then break end
             loaderStatus.Text = step.text
-            TweenService:Create(loaderFill, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            TweenService:Create(loaderFill, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
                 Size = UDim2.new(step.t, 0, 1, 0),
             }):Play()
             local t0 = tick()
-            while tick() - t0 < 0.42 do
+            while tick() - t0 < 0.4 do
                 if loaderSkipped then break end
                 task.wait(0.05)
             end
             if loaderSkipped then break end
-            task.wait(0.06)
+            task.wait(0.05)
         end
 
         if not loaderSkipped then
-            task.wait(0.12)
+            task.wait(0.1)
         end
         finishLoader()
     end
@@ -397,7 +630,7 @@ local fovCircle = nil
 if hasDrawing then
     fovCircle = Drawing.new("Circle")
     fovCircle.Thickness = 1
-    fovCircle.NumSides = 64
+    fovCircle.NumSides = 28
     fovCircle.Radius = fovRadius
     fovCircle.Filled = false
     fovCircle.Visible = false
@@ -1607,11 +1840,15 @@ end, 70)
 CreateSectionHeader(tabs["Combat"], 110, "Options")
 
 CreateToggle(tabs["Combat"], 130, "Team Check", true, function(state)
-    teamCheckEnabled = state
-    if state and lockedTarget and lockedTarget:IsA("Player") and isTeammate(lockedTarget) then
+    teamCheckEnabled = state and true or false
+    if teamCheckEnabled and lockedTarget and lockedTarget:IsA("Player") and H.isTeammate(lockedTarget) then
         lockedTarget = nil
     end
 end)
+teamCheckEnabled = true
+if toggleRegistry["Team Check"] then
+    toggleRegistry["Team Check"].set(true)
+end
 
 CreateToggle(tabs["Combat"], 170, "Auto Relock", true, function(state)
     autoRelockEnabled = state
@@ -1685,6 +1922,43 @@ rageInfo.setBuilder(function(panel)
     bindFeatureKey(panel, 65, 10, CombatBinds.rage, function(k) CombatBinds.rage = k end)
 end, 38)
 
+local _, tbInfo = CreateToggle(tabs["Combat"], 350, "Triggerbot", false, function(state)
+    triggerbotEnabled = state
+end)
+tbInfo.setBuilder(function(panel)
+    local lbl = Instance.new("TextLabel", panel)
+    lbl.BackgroundTransparency = 1; lbl.Position = UDim2.new(0, 10, 0, 2)
+    lbl.Size = UDim2.new(0, 40, 0, 18); lbl.Font = Enum.Font.GothamBold
+    lbl.Text = "Delay"; lbl.TextColor3 = Color3.fromRGB(160,160,160); lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 6
+    local opts = {{"30ms", 0.03}, {"50ms", 0.05}, {"100ms", 0.1}}
+    for i, opt in ipairs(opts) do
+        local b = Instance.new("TextButton", panel)
+        b.Name = "TbDelayBtn"
+        b.BackgroundColor3 = (triggerbotDelay == opt[2]) and Color3.fromRGB(50,90,50) or Color3.fromRGB(40,40,43)
+        b.BorderSizePixel = 0; b.Position = UDim2.new(0, 50 + (i-1)*52, 0, 2)
+        b.Size = UDim2.new(0, 48, 0, 18); b.Font = Enum.Font.GothamBold
+        b.Text = opt[1]; b.TextColor3 = Color3.fromRGB(200,200,200); b.TextSize = 9; b.ZIndex = 6
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+        b.MouseButton1Click:Connect(function()
+            triggerbotDelay = opt[2]
+            for _, c in ipairs(panel:GetChildren()) do
+                if c:IsA("TextButton") and c.Name == "TbDelayBtn" then
+                    c.BackgroundColor3 = Color3.fromRGB(40,40,43)
+                end
+            end
+            b.BackgroundColor3 = Color3.fromRGB(50,90,50)
+        end)
+    end
+
+    local kbLbl = Instance.new("TextLabel", panel)
+    kbLbl.BackgroundTransparency = 1; kbLbl.Position = UDim2.new(0, 10, 0, 26)
+    kbLbl.Size = UDim2.new(0, 50, 0, 18); kbLbl.Font = Enum.Font.GothamBold
+    kbLbl.Text = "Keybind"; kbLbl.TextColor3 = Color3.fromRGB(160,160,160); kbLbl.TextSize = 10
+    kbLbl.TextXAlignment = Enum.TextXAlignment.Left; kbLbl.ZIndex = 6
+    bindFeatureKey(panel, 65, 26, CombatBinds.trigger, function(k) CombatBinds.trigger = k end)
+end, 52)
+
 end)() 
 
 ;(function()
@@ -1724,6 +1998,7 @@ end)()
             {name = "Aim Radius", on = fovCircleEnabled, key = CombatBinds.aim},
             {name = "Auto Lock Kill", on = autoLockKillEnabled, key = CombatBinds.alk},
             {name = "Rage Bot", on = rageBotEnabled, key = CombatBinds.rage},
+            {name = "Triggerbot", on = triggerbotEnabled, key = CombatBinds.trigger},
             {name = "Auto Relock", on = autoRelockEnabled and camLockEnabled, key = nil},
             {name = "Team Check", on = teamCheckEnabled, key = nil},
             {name = "Target Info", on = targetInfoEnabled, key = nil},
@@ -2242,7 +2517,18 @@ local _b1, boxInfo = CreateToggle(tabs["Visuals"], 345, "2D Box", false, functio
     boxEspEnabled = state
     if not state then
         for _, obj in pairs(espObjects) do
-            if obj.boxOutline then obj.boxOutline:Remove() obj.boxOutline = nil end
+            if obj.boxOutline then
+                H.hideQuad(obj.boxOutline)
+                pcall(function() obj.boxOutline:Remove() end)
+                obj.boxOutline = nil
+            end
+        end
+        for _, obj in pairs(npcEspObjects) do
+            if obj.boxOutline then
+                H.hideQuad(obj.boxOutline)
+                pcall(function() obj.boxOutline:Remove() end)
+                obj.boxOutline = nil
+            end
         end
     end
 end)
@@ -3439,6 +3725,9 @@ local function refreshServerList()
                         lockBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 38)
                     else
                         if player.Character and camLockEnabled then
+                            if teamCheckEnabled and H.isTeammate(player) then
+                                return
+                            end
                             lockedTarget = player
                             lockBtn.Text = "Unlock"
                             lockBtn.BackgroundColor3 = Color3.fromRGB(35, 60, 35)
@@ -3826,7 +4115,7 @@ pcall(function()
                     local hum = char:FindFirstChildOfClass("Humanoid")
                     if root and hum and hum.Health > 0 then
                         
-                        if not isTeammate(player) then
+                        if not H.isTeammate(player) then
                             local screenPos, onScreen = Camera:WorldToViewportPoint(root.Position)
                             if onScreen then
                                 local dist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
@@ -3932,7 +4221,156 @@ pcall(function()
             end
         end))
 
-    end 
+    end
+
+    
+    if placeId == 102871156420149 or GameDetect.isLostFront() then
+        if not tabs["Game"] then
+            createTabButton("Game")
+            tabs["Game"] = createTabContent()
+        end
+
+        CreateSectionHeader(tabs["Game"], 5, "The Lost Front")
+
+        local lfStabilizeEnabled = true
+        local lfStabMode = "Normal" 
+        local lfPrevCamCF = nil
+        local lfStepName = "TwilightLFStabilize"
+
+        local function lfKeepAmount(lookDelta, firing)
+            local base
+            if lfStabMode == "Light" then
+                base = firing and 0.62 or 0.88
+            elseif lfStabMode == "Heavy" then
+                base = firing and 0.28 or 0.55
+            else
+                base = firing and 0.42 or 0.72
+            end
+            if lookDelta > 0.12 then
+                base = math.min(base, lfStabMode == "Heavy" and 0.22 or (lfStabMode == "Light" and 0.5 or 0.32))
+            end
+            return base
+        end
+
+        local function lfStabilize()
+            if not lfStabilizeEnabled or not scriptActive then return end
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+            if cam.CameraType == Enum.CameraType.Scriptable then
+                lfPrevCamCF = cam.CFrame
+                return
+            end
+
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local off = hum.CameraOffset
+                if off.Magnitude > 0.001 then
+                    local pull = lfStabMode == "Heavy" and 0.97 or (lfStabMode == "Light" and 0.8 or 0.9)
+                    hum.CameraOffset = off:Lerp(Vector3.zero, pull)
+                end
+            end
+
+            
+            if camLockEnabled and lockedTarget then
+                lfPrevCamCF = cam.CFrame
+                return
+            end
+
+            local cur = cam.CFrame
+            if lfPrevCamCF then
+                local lookDelta = (cur.LookVector - lfPrevCamCF.LookVector).Magnitude
+                local firing = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+                    or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+                local keep = lfKeepAmount(lookDelta, firing)
+                local blended = lfPrevCamCF:Lerp(cur, keep)
+                cam.CFrame = CFrame.new(cur.Position) * blended.Rotation
+            end
+            lfPrevCamCF = cam.CFrame
+        end
+
+        pcall(function()
+            RunService:UnbindFromRenderStep(lfStepName)
+        end)
+        RunService:BindToRenderStep(lfStepName, Enum.RenderPriority.Camera.Value + 3, lfStabilize)
+        table.insert(connections, {
+            Disconnect = function()
+                pcall(function() RunService:UnbindFromRenderStep(lfStepName) end)
+            end,
+        })
+
+        
+        task.spawn(function()
+            while scriptActive do
+                if lfStabilizeEnabled then
+                    local cam = workspace.CurrentCamera
+                    if cam then
+                        for _, child in ipairs(cam:GetChildren()) do
+                            local n = string.lower(child.Name)
+                            if string.find(n, "shake", 1, true)
+                                or string.find(n, "recoil", 1, true)
+                                or string.find(n, "sway", 1, true)
+                                or string.find(n, "wobble", 1, true) then
+                                pcall(function() child:Destroy() end)
+                            end
+                        end
+                    end
+                    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                    if pg then
+                        for _, child in ipairs(pg:GetChildren()) do
+                            local n = string.lower(child.Name)
+                            if string.find(n, "camerashake", 1, true) or string.find(n, "recoil", 1, true) then
+                                pcall(function() child:Destroy() end)
+                            end
+                        end
+                    end
+                end
+                task.wait(0.4)
+            end
+        end)
+
+        local _, lfStabInfo = CreateToggle(tabs["Game"], 25, "Weapon Stabilize", true, function(state)
+            lfStabilizeEnabled = state
+            if not state then lfPrevCamCF = nil end
+        end)
+        ActiveExtras.lfStabilize = {
+            name = "Stabilize",
+            on = function() return lfStabilizeEnabled end,
+        }
+        lfStabInfo.setBuilder(function(panel)
+            local lbl = Instance.new("TextLabel", panel)
+            lbl.BackgroundTransparency = 1
+            lbl.Position = UDim2.new(0, 10, 0, 0)
+            lbl.Size = UDim2.new(0, 55, 1, 0)
+            lbl.Font = Enum.Font.GothamBold
+            lbl.Text = "Strength"
+            lbl.TextColor3 = Color3.fromRGB(160, 160, 160)
+            lbl.TextSize = 10
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.ZIndex = 6
+
+            local modes = {"Light", "Normal", "Heavy"}
+            local modeBtn = Instance.new("TextButton", panel)
+            modeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 53)
+            modeBtn.BorderSizePixel = 0
+            modeBtn.Position = UDim2.new(0, 70, 0.5, -9)
+            modeBtn.Size = UDim2.new(0, 70, 0, 18)
+            modeBtn.Font = Enum.Font.GothamBold
+            modeBtn.Text = lfStabMode
+            modeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            modeBtn.TextSize = 9
+            modeBtn.ZIndex = 6
+            Instance.new("UICorner", modeBtn).CornerRadius = UDim.new(0, 4)
+            modeBtn.MouseButton1Click:Connect(function()
+                local idx = 1
+                for i, m in ipairs(modes) do
+                    if m == lfStabMode then idx = i break end
+                end
+                lfStabMode = modes[(idx % #modes) + 1]
+                modeBtn.Text = lfStabMode
+            end)
+        end, 38)
+    end
 
 end) 
 
@@ -3959,6 +4397,7 @@ pcall(function()
         [2788229376] = true, 
         [90568084448279] = true,
         [94987506187454] = true,
+        [102871156420149] = true,
     }
     local showRec = combatGameIds[game.PlaceId] or GameDetect.isRedliner() or isMobile or mobileControlsEnabled
     if showRec then
@@ -4196,7 +4635,7 @@ local function getClosestPlayerToCursor()
                     
                 elseif char:FindFirstChildOfClass("ForceField") then
                     
-                elseif isTeammate(player) then
+                elseif H.isTeammate(player) then
                     
                 elseif root.Position.Magnitude >= 1 and not (myRoot and root.Position.Y < myY - 50) then
                     local state = hum:GetState()
@@ -4214,7 +4653,7 @@ local function getClosestPlayerToCursor()
                                 if dist3d < closestDist and dist3d > 1 then
                                     local passWallCheck = true
                                     if fovVisibleOnly and tick() > _respawnGrace then
-                                        passWallCheck = isCharVisible(char, myChar)
+                                        passWallCheck = H.isCharVisibleFast(char, myChar)
                                     end
                                     if passWallCheck then
                                         closestDist = dist3d
@@ -4228,7 +4667,7 @@ local function getClosestPlayerToCursor()
                             if anyOnScreen and dist < maxDist and dist < closestDist then
                                 local passWallCheck = true
                                 if fovVisibleOnly and tick() > _respawnGrace then
-                                    passWallCheck = isCharVisible(char, myChar)
+                                    passWallCheck = H.isCharVisibleFast(char, myChar)
                                 end
                                 if passWallCheck then
                                     closestDist = dist
@@ -4262,7 +4701,7 @@ local function getClosestPlayerToCursor()
                             if anyOnScreen and dist < maxDist and dist < closestDist then
                                 local passWallCheck = true
                                 if fovVisibleOnly and tick() > _respawnGrace then
-                                    passWallCheck = isCharVisible(model, myChar)
+                                    passWallCheck = H.isCharVisibleFast(model, myChar)
                                 end
                                 if passWallCheck then
                                     closestDist = dist
@@ -4457,14 +4896,14 @@ end
 local function lockOntoTarget()
     if not camLockEnabled then return false end
     if lockedTarget then
-        if lockedTarget:IsA("Player") and isTeammate(lockedTarget) then
+        if lockedTarget:IsA("Player") and H.isTeammate(lockedTarget) then
             lockedTarget = nil
         else
             return true
         end
     end
     local target = getClosestPlayerToCursor()
-    if target and not (target:IsA("Player") and isTeammate(target)) then
+    if target and not (target:IsA("Player") and H.isTeammate(target)) then
         lockedTarget = target
         if lockFeedbackEnabled then
             local name = (target.DisplayName or target.Name)
@@ -4510,6 +4949,10 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
         end
         if CombatBinds.rage and input.KeyCode == CombatBinds.rage then
             if toggleRegistry["Rage Bot"] then toggleRegistry["Rage Bot"].set(not rageBotEnabled) end
+            return
+        end
+        if CombatBinds.trigger and input.KeyCode == CombatBinds.trigger then
+            if toggleRegistry["Triggerbot"] then toggleRegistry["Triggerbot"].set(not triggerbotEnabled) end
             return
         end
         if clickTPKeybind and input.KeyCode == clickTPKeybind then
@@ -4771,12 +5214,13 @@ end))
 
 
 local _lastAutoLockCheck = 0
+local _lastAcquireCheck = 0
 table.insert(connections, RunService.Heartbeat:Connect(function()
     if not scriptActive or not camLockEnabled or not fovCircleEnabled then return end
     if camLockMode == "Auto" and not lockKeyHeld and lockedTarget then
         local now = tick()
         
-        local checkInterval = rageBotEnabled and 0.1 or 0.2
+        local checkInterval = rageBotEnabled and 0.12 or 0.25
         if now - _lastAutoLockCheck < checkInterval then return end
         _lastAutoLockCheck = now
 
@@ -4825,7 +5269,7 @@ table.insert(connections, (function()
     local stepName = "TwilightCamLock"
     local function updateCamLock()
     if not scriptActive or not camLockEnabled or not lockedTarget then return end
-    if lockedTarget:IsA("Player") and isTeammate(lockedTarget) then
+    if lockedTarget:IsA("Player") and H.isTeammate(lockedTarget) then
         lockedTarget = nil
         return
     end
@@ -4885,7 +5329,7 @@ table.insert(connections, (function()
     if part:IsA("BasePart") and part.AssemblyLinearVelocity.Y < -120 and targetPos.Y < -50 then lockedTarget = nil return end
     
     if fovVisibleOnly and tick() > _respawnGrace then
-        if not isCharVisible(char, myChar) then
+        if not H.isCharVisibleFast(char, myChar) then
             
             lockedTarget = nil
             return
@@ -4933,6 +5377,9 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
     
     if not fovCircleEnabled then return end
     if camLockMode == "Auto" and not lockKeyHeld and not lockedTarget then
+        local now = tick()
+        if now - _lastAcquireCheck < 0.07 then return end
+        _lastAcquireCheck = now
         local target = getClosestPlayerToCursor()
         
         if not target and rageBotEnabled then
@@ -4946,7 +5393,7 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
                         local root = char:FindFirstChild("HumanoidRootPart")
                         local hum = char:FindFirstChildOfClass("Humanoid")
                         if root and hum and hum.Health > 0 then
-                            if not isTeammate(player) then
+                            if not H.isTeammate(player) then
                                 local dist = (root.Position - myRoot.Position).Magnitude
                                 if dist < closestDist and dist > 1 then
                                     closestDist = dist
@@ -4974,6 +5421,10 @@ local _lastSettleAimPoint = nil
 local _autoClickHeld = false
 local _autoClickReleaseAt = 0
 local _isArsenalPlace = (game.PlaceId == 286090429 or game.PlaceId == 2377868063)
+local _lastTriggerFire = 0
+local _tbRayParams = RaycastParams.new()
+_tbRayParams.FilterType = Enum.RaycastFilterType.Exclude
+_tbRayParams.IgnoreWater = true
 
 local function getAimSettleDelay()
     if isMobile or mobileControlsEnabled then return 0.01 end
@@ -5057,6 +5508,41 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
 
     if _autoClickHeld and tick() >= _autoClickReleaseAt then
         releaseAutoClick()
+    end
+
+    
+    if triggerbotEnabled and not UserInputService:GetFocusedTextBox() then
+        local nowTb = tick()
+        local delayTb = (triggerbotDelay and triggerbotDelay > 0) and triggerbotDelay or 0.05
+        if nowTb - _lastTriggerFire >= delayTb then
+            local cam = workspace.CurrentCamera or Camera
+            local myCharTb = LocalPlayer.Character
+            if cam and myCharTb then
+                local vp = cam.ViewportSize
+                local ray = cam:ViewportPointToRay(vp.X * 0.5, vp.Y * 0.5)
+                _tbRayParams.FilterDescendantsInstances = {myCharTb}
+                local hit = workspace:Raycast(ray.Origin, ray.Direction * 800, _tbRayParams)
+                if hit and hit.Instance then
+                    local model = hit.Instance:FindFirstAncestorOfClass("Model")
+                    if model then
+                        local hum = model:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 and not model:FindFirstChildOfClass("ForceField") then
+                            local plr = Players:GetPlayerFromCharacter(model)
+                            local valid = false
+                            if plr and plr ~= LocalPlayer then
+                                valid = not H.isTeammate(plr)
+                            elseif npcCombatEnabled and not plr then
+                                valid = true
+                            end
+                            if valid then
+                                _lastTriggerFire = nowTb
+                                fireAutoClick()
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
 
     if not autoLockKillEnabled or not camLockEnabled then return end
@@ -5460,31 +5946,25 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                     obj.boxOutline.Color = boxEspColor
                     obj.boxOutline.Thickness = boxThickness
                     local rootPos = root.Position
-                    
                     local charHeight = 5
                     local halfY = charHeight / 2
-
-                    local _, onScreenChk = Camera:WorldToViewportPoint(rootPos)
-                    if onScreenChk then
-                        local topP = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, halfY, 0))
-                        local botP = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, -halfY, 0))
-                        local height = math.abs(topP.Y - botP.Y)
+                    local topV = H.worldToScreen2(rootPos + Vector3.new(0, halfY, 0))
+                    local botV = H.worldToScreen2(rootPos + Vector3.new(0, -halfY, 0))
+                    local rootV = H.worldToScreen2(rootPos)
+                    if topV and botV and rootV then
+                        local height = math.abs(topV.Y - botV.Y)
                         local width = height * 0.55
-
-                        local centerX = (topP.X + botP.X) / 2
-                        local topY = topP.Y
-                        local botY = botP.Y
-
-                        obj.boxOutline.PointA = Vector2.new(centerX - width / 2, topY)
-                        obj.boxOutline.PointB = Vector2.new(centerX + width / 2, topY)
-                        obj.boxOutline.PointC = Vector2.new(centerX + width / 2, botY)
-                        obj.boxOutline.PointD = Vector2.new(centerX - width / 2, botY)
+                        local centerX = (topV.X + botV.X) / 2
+                        obj.boxOutline.PointA = Vector2.new(centerX - width / 2, topV.Y)
+                        obj.boxOutline.PointB = Vector2.new(centerX + width / 2, topV.Y)
+                        obj.boxOutline.PointC = Vector2.new(centerX + width / 2, botV.Y)
+                        obj.boxOutline.PointD = Vector2.new(centerX - width / 2, botV.Y)
                         obj.boxOutline.Visible = true
                     else
-                        obj.boxOutline.Visible = false
+                        H.hideQuad(obj.boxOutline)
                     end
                 else
-                    if obj.boxOutline then obj.boxOutline:Remove() obj.boxOutline = nil end
+                    if obj.boxOutline then pcall(function() obj.boxOutline:Remove() end) obj.boxOutline = nil end
                 end
 
                 
@@ -5697,16 +6177,20 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                     local allVisible = true
                     local screenCorners = {}
                     for i, c in ipairs(corners) do
-                        local sp, onScreen = Camera:WorldToViewportPoint(c)
-                        screenCorners[i] = {pos = Vector2.new(sp.X, sp.Y), visible = onScreen}
-                        if not onScreen then allVisible = false end
+                        local sp = H.worldToScreen2(c)
+                        if sp then
+                            screenCorners[i] = sp
+                        else
+                            allVisible = false
+                            break
+                        end
                     end
 
                     if allVisible then
                         for i, edge in ipairs(edges) do
                             local line = obj.box3d[i]
-                            line.From = screenCorners[edge[1]].pos
-                            line.To = screenCorners[edge[2]].pos
+                            line.From = screenCorners[edge[1]]
+                            line.To = screenCorners[edge[2]]
                             if rainbow.box3d then
                                 line.Color = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
                             else
@@ -5717,7 +6201,7 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                         end
                     else
                         for i = 1, 12 do
-                            obj.box3d[i].Visible = false
+                            H.hideLine(obj.box3d[i])
                         end
                     end
                 else
@@ -5881,28 +6365,19 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
     end
 
     for player, obj in pairs(espObjects) do
-        if not player.Parent then
+        local charOk = player.Parent and player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local humOk = charOk and player.Character:FindFirstChildOfClass("Humanoid")
+        if not charOk or not humOk or humOk.Health <= 0 then
             if obj.billboard then pcall(function() obj.billboard:Destroy() end) end
             if obj.highlight then pcall(function() obj.highlight:Destroy() end) end
             if obj.trail then pcall(function() obj.trail:Destroy() end) end
             if obj.trailAttach0 then pcall(function() obj.trailAttach0:Destroy() end) end
             if obj.trailAttach1 then pcall(function() obj.trailAttach1:Destroy() end) end
             if obj.chams then pcall(function() obj.chams:Destroy() end) end
-            if obj.tracer then pcall(function() obj.tracer:Remove() end) end
-            if obj.boxOutline then pcall(function() obj.boxOutline:Remove() end) end
-            if obj.skeleton then
-                for _, line in pairs(obj.skeleton) do pcall(function() line:Remove() end) end
-            end
-            if obj.headDot then pcall(function() obj.headDot:Remove() end) end
-            if obj.healthBar then pcall(function() obj.healthBar:Remove() end) end
-            if obj.healthBarBg then pcall(function() obj.healthBarBg:Remove() end) end
-            if obj.box3d then
-                for _, line in pairs(obj.box3d) do pcall(function() line:Remove() end) end
-            end
-            if obj.cornerBox then for _, line in pairs(obj.cornerBox) do pcall(function() line:Remove() end) end end
             if obj.beam then pcall(function() obj.beam:Destroy() end) end
             if obj.beamAttach0 then pcall(function() obj.beamAttach0:Destroy() end) end
             if obj.beamAttach1 then pcall(function() obj.beamAttach1:Destroy() end) end
+            H.wipeEspDrawings(obj)
             espObjects[player] = nil
         end
     end
@@ -6246,22 +6721,22 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                             obj.box.Color = Color3.fromRGB(255, 200, 50)
                             obj.box.Thickness = 1
                             obj.box.Filled = false
+                            obj.box.Visible = false
                         end
-                        local _, onScreen = Camera:WorldToViewportPoint(root.Position)
-                        if onScreen then
-                            local size = char:GetExtentsSize()
-                            local top = Camera:WorldToViewportPoint(root.Position + Vector3.new(0, size.Y/2, 0))
-                            local bot = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, size.Y/2, 0))
-                            local h2 = math.abs(top.Y - bot.Y)
+                        local size = char:GetExtentsSize()
+                        local topV = H.worldToScreen2(root.Position + Vector3.new(0, size.Y/2, 0))
+                        local botV = H.worldToScreen2(root.Position - Vector3.new(0, size.Y/2, 0))
+                        if topV and botV then
+                            local h2 = math.abs(topV.Y - botV.Y)
                             local w2 = h2 * 0.6
-                            local cx = top.X
-                            obj.box.PointA = Vector2.new(cx - w2/2, top.Y)
-                            obj.box.PointB = Vector2.new(cx + w2/2, top.Y)
-                            obj.box.PointC = Vector2.new(cx + w2/2, bot.Y)
-                            obj.box.PointD = Vector2.new(cx - w2/2, bot.Y)
+                            local cx = topV.X
+                            obj.box.PointA = Vector2.new(cx - w2/2, topV.Y)
+                            obj.box.PointB = Vector2.new(cx + w2/2, topV.Y)
+                            obj.box.PointC = Vector2.new(cx + w2/2, botV.Y)
+                            obj.box.PointD = Vector2.new(cx - w2/2, botV.Y)
                             obj.box.Visible = true
                         else
-                            obj.box.Visible = false
+                            H.hideQuad(obj.box)
                         end
                     else
                         if obj.box then pcall(function() obj.box:Remove() end) obj.box = nil end
@@ -6593,6 +7068,7 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
             if boxEspEnabled and hasDrawing then
                 if not obj.boxOutline then
                     local outline = Drawing.new("Quad")
+                    outline.Visible = false
                     outline.Color = boxEspColor
                     outline.Thickness = boxThickness
                     outline.Filled = false
@@ -6601,25 +7077,23 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                 obj.boxOutline.Color = boxEspColor
                 obj.boxOutline.Thickness = boxThickness
                 local rootPos = root.Position
-                local _, onScreenChk = Camera:WorldToViewportPoint(rootPos)
-                if onScreenChk then
-                    local charHeight = 5
-                    local halfY = charHeight / 2
-                    local topLeft = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, halfY, 0))
-                    local bottomRight = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, -halfY, 0))
-                    local h2 = math.abs(topLeft.Y - bottomRight.Y)
+                local halfY = 2.5
+                local topV = H.worldToScreen2(rootPos + Vector3.new(0, halfY, 0))
+                local botV = H.worldToScreen2(rootPos + Vector3.new(0, -halfY, 0))
+                if topV and botV then
+                    local h2 = math.abs(topV.Y - botV.Y)
                     local w2 = h2 * 0.55
-                    local cx = (topLeft.X + bottomRight.X) / 2
-                    obj.boxOutline.PointA = Vector2.new(cx - w2/2, topLeft.Y)
-                    obj.boxOutline.PointB = Vector2.new(cx + w2/2, topLeft.Y)
-                    obj.boxOutline.PointC = Vector2.new(cx + w2/2, bottomRight.Y)
-                    obj.boxOutline.PointD = Vector2.new(cx - w2/2, bottomRight.Y)
+                    local cx = (topV.X + botV.X) / 2
+                    obj.boxOutline.PointA = Vector2.new(cx - w2/2, topV.Y)
+                    obj.boxOutline.PointB = Vector2.new(cx + w2/2, topV.Y)
+                    obj.boxOutline.PointC = Vector2.new(cx + w2/2, botV.Y)
+                    obj.boxOutline.PointD = Vector2.new(cx - w2/2, botV.Y)
                     obj.boxOutline.Visible = true
                 else
-                    obj.boxOutline.Visible = false
+                    H.hideQuad(obj.boxOutline)
                 end
             else
-                if obj.boxOutline then obj.boxOutline:Remove() obj.boxOutline = nil end
+                if obj.boxOutline then pcall(function() obj.boxOutline:Remove() end) obj.boxOutline = nil end
             end
 
             
@@ -6775,15 +7249,19 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                 local allVisible = true
                 local screenCorners = {}
                 for i, c in ipairs(corners) do
-                    local sp, onScreen2 = Camera:WorldToViewportPoint(c)
-                    screenCorners[i] = {pos = Vector2.new(sp.X, sp.Y), visible = onScreen2}
-                    if not onScreen2 then allVisible = false end
+                    local sp = H.worldToScreen2(c)
+                    if sp then
+                        screenCorners[i] = sp
+                    else
+                        allVisible = false
+                        break
+                    end
                 end
                 if allVisible then
                     for i, edge in ipairs(edges) do
                         local line = obj.box3d[i]
-                        line.From = screenCorners[edge[1]].pos
-                        line.To = screenCorners[edge[2]].pos
+                        line.From = screenCorners[edge[1]]
+                        line.To = screenCorners[edge[2]]
                         if rainbow.box3d then
                             line.Color = Color3.fromHSV((tick() * 0.5) % 1, 1, 1)
                         else
@@ -6793,7 +7271,7 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                         line.Visible = true
                     end
                 else
-                    for i = 1, 12 do obj.box3d[i].Visible = false end
+                    for i = 1, 12 do H.hideLine(obj.box3d[i]) end
                 end
             else
                 if obj.box3d then
@@ -7595,8 +8073,9 @@ end))
 
     local extras = {
         {{"Kill", "Auto Lock Kill"}, {"Rage", "Rage Bot"}},
-        {{"Clip", "Noclip"}, {"Speed", "Walk Speed"}},
-        {{"Jump", "Infinite Jump"}, {"TP", "Click Teleport"}},
+        {{"Trig", "Triggerbot"}, {"Clip", "Noclip"}},
+        {{"Speed", "Walk Speed"}, {"Jump", "Infinite Jump"}},
+        {{"TP", "Click Teleport"}},
     }
     for i, pair in ipairs(extras) do
         local row = makeRow(4 + i)
@@ -7618,6 +8097,7 @@ end))
         paint(buttons.Aim, fovCircleEnabled)
         paint(buttons.Kill, autoLockKillEnabled)
         paint(buttons.Rage, rageBotEnabled)
+        paint(buttons.Trig, triggerbotEnabled)
         paint(buttons.Clip, noclipEnabled)
         paint(buttons.Speed, speedEnabled)
         paint(buttons.Jump, infiniteJumpEnabled)
@@ -7659,7 +8139,7 @@ cmdBarFrame.BorderSizePixel = 0
 cmdBarFrame.Position = UDim2.new(0, 8, 1, -38)
 cmdBarFrame.Size = UDim2.new(0, 240, 0, 26)
 cmdBarFrame.Active = true
-cmdBarFrame.Visible = true
+cmdBarFrame.Visible = not isMobile
 Instance.new("UICorner", cmdBarFrame).CornerRadius = UDim.new(0, 4)
 do local _s = Instance.new("UIStroke", cmdBarFrame); _s.Color = Color3.fromRGB(45, 45, 45); _s.Thickness = 1 end
 
@@ -7670,7 +8150,7 @@ cmdTitle.BackgroundTransparency = 1
 cmdTitle.Position = UDim2.new(0, 0, 0, 0)
 cmdTitle.Size = UDim2.new(1, 0, 1, 0)
 cmdTitle.Font = Enum.Font.GothamBold
-cmdTitle.Text = "Twilight - V1.0"
+cmdTitle.Text = "Twilight V2.5"
 cmdTitle.TextColor3 = Color3.fromRGB(160, 160, 160)
 cmdTitle.TextSize = 11
 cmdTitle.TextXAlignment = Enum.TextXAlignment.Center
@@ -7708,6 +8188,7 @@ cmdInput.TextXAlignment = Enum.TextXAlignment.Left
 cmdInput.ClearTextOnFocus = true
 
 local function activateCmdBar()
+    if isMobile then return end
     cmdBarActive = true
     cmdTitle.Visible = false
     cmdInputArea.Visible = true
@@ -7716,6 +8197,7 @@ local function activateCmdBar()
 end
 
 local function deactivateCmdBar()
+    if isMobile then return end
     cmdBarActive = false
     cmdInputArea.Visible = false
     cmdTitle.Visible = true
@@ -7786,6 +8268,8 @@ cmdCommands["hitbox"] = function() if toggleRegistry["Expander"] then toggleRegi
 cmdCommands["unhitbox"] = function() if toggleRegistry["Expander"] then toggleRegistry["Expander"].set(false) end end
 cmdCommands["fov"] = function() if toggleRegistry["Aim Radius"] then toggleRegistry["Aim Radius"].set(not fovCircleEnabled) end end
 cmdCommands["unfov"] = function() if toggleRegistry["Aim Radius"] then toggleRegistry["Aim Radius"].set(false) end end
+cmdCommands["triggerbot"] = function() if toggleRegistry["Triggerbot"] then toggleRegistry["Triggerbot"].set(not triggerbotEnabled) end end
+cmdCommands["untriggerbot"] = function() if toggleRegistry["Triggerbot"] then toggleRegistry["Triggerbot"].set(false) end end
 cmdCommands["speed"] = function() if toggleRegistry["Walk Speed"] then toggleRegistry["Walk Speed"].set(not speedEnabled) end end
 cmdCommands["unspeed"] = function() if toggleRegistry["Walk Speed"] then toggleRegistry["Walk Speed"].set(false) end end
 cmdCommands["noclip"] = function()
@@ -7830,6 +8314,7 @@ cmdCommands["unbasic"] = function()
 end
 cmdCommands["rejoin"] = function() game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer) end
 cmdCommands["destroy"] = function()
+    pcall(stopFreecam)
     pcall(function() firesignal(CloseButton.MouseButton1Click) end)
     if ScreenGui and ScreenGui.Parent then
         
@@ -8149,6 +8634,100 @@ cmdCommands["unfly"] = function()
 
     flyBodyVel = nil
     flyBodyGyro = nil
+end
+
+local freecamActive = false
+local freecamConn = nil
+local freecamSpeed = 60
+local freecamYaw, freecamPitch = 0, 0
+local freecamPos = nil
+local freecamSaved = nil
+
+local function stopFreecam()
+    if not freecamActive then return end
+    freecamActive = false
+    if freecamConn then
+        freecamConn:Disconnect()
+        freecamConn = nil
+    end
+    pcall(function()
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    end)
+    local cam = workspace.CurrentCamera
+    if cam and freecamSaved then
+        cam.CameraType = freecamSaved.type or Enum.CameraType.Custom
+        if freecamSaved.subject then
+            cam.CameraSubject = freecamSaved.subject
+        else
+            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then cam.CameraSubject = hum end
+        end
+    end
+    freecamSaved = nil
+    freecamPos = nil
+end
+
+local function startFreecam(speed)
+    if freecamActive then
+        freecamSpeed = speed or freecamSpeed
+        return
+    end
+    if viewingPlayer then
+        viewingPlayer = nil
+    end
+    freecamSpeed = speed or 60
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    freecamSaved = {
+        type = cam.CameraType,
+        subject = cam.CameraSubject,
+    }
+    freecamPos = cam.CFrame.Position
+    local look = cam.CFrame.LookVector
+    freecamYaw = math.atan2(-look.X, -look.Z)
+    freecamPitch = math.asin(math.clamp(look.Y, -1, 1))
+    cam.CameraType = Enum.CameraType.Scriptable
+    freecamActive = true
+
+    freecamConn = RunService.RenderStepped:Connect(function(dt)
+        if not freecamActive then return end
+        local c = workspace.CurrentCamera
+        if not c then return end
+
+        if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+            UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+            local delta = UserInputService:GetMouseDelta()
+            freecamYaw = freecamYaw - delta.X * 0.004
+            freecamPitch = math.clamp(freecamPitch - delta.Y * 0.004, -1.45, 1.45)
+        else
+            UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+        end
+
+        local rot = CFrame.Angles(0, freecamYaw, 0) * CFrame.Angles(freecamPitch, 0, 0)
+        local move = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + rot.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - rot.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - rot.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + rot.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.E) or UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            move = move + Vector3.new(0, 1, 0)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Q) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+            move = move - Vector3.new(0, 1, 0)
+        end
+
+        local spd = freecamSpeed
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then spd = spd * 2.4 end
+        if move.Magnitude > 0 then
+            freecamPos = freecamPos + move.Unit * spd * dt
+        end
+        c.CFrame = CFrame.new(freecamPos) * rot
+    end)
+end
+
+cmdCommands["freecam"] = "NEEDS_ARG"
+cmdCommands["unfreecam"] = function()
+    stopFreecam()
 end
 
 
@@ -8754,6 +9333,9 @@ cmdInput.FocusLost:Connect(function(enterPressed)
         elseif cmd == "fly" then
             local spd = tonumber(arg)
             startFly(spd)
+        elseif cmd == "freecam" then
+            local spd = tonumber(arg)
+            startFreecam(spd)
         elseif cmd == "goto" and arg ~= "" then
             
             local coords = raw:sub(#cmd + 2)
@@ -8797,9 +9379,15 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
 
     
     if input.KeyCode == Enum.KeyCode.Semicolon then
+        if isMobile then return end
         if not cmdBarActive then
             activateCmdBar()
         end
+        return
+    end
+
+    if input.KeyCode == Enum.KeyCode.Escape and freecamActive then
+        stopFreecam()
         return
     end
 
