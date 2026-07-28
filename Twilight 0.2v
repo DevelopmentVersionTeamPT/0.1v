@@ -163,9 +163,31 @@ local autoLockKillDelay = 0.03
 local rageBotEnabled = false
 local camLockMode = "Auto" 
 local lockKeyHeld = false 
+local teamCheckEnabled = true 
 local fovVisibleOnly = true 
 local _respawnGrace = 0 
 local _manualUnlockGrace = 0 
+
+local function isTeammate(player)
+    if not teamCheckEnabled then return false end
+    if typeof(player) ~= "Instance" or not player:IsA("Player") then return false end
+    if player == LocalPlayer then return true end
+    local myTeam = LocalPlayer.Team
+    local theirTeam = player.Team
+    if myTeam ~= nil and theirTeam ~= nil and myTeam == theirTeam then
+        return true
+    end
+    if myTeam ~= nil and theirTeam ~= nil then
+        return false
+    end
+    
+    if LocalPlayer.Neutral == false and player.Neutral == false then
+        if LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then
+            return true
+        end
+    end
+    return false
+end
 
 local fovCircleEnabled = false
 local fovCircleColor = Color3.fromRGB(255, 255, 255)
@@ -1584,17 +1606,24 @@ end, 70)
 
 CreateSectionHeader(tabs["Combat"], 110, "Options")
 
-CreateToggle(tabs["Combat"], 130, "Auto Relock", true, function(state)
+CreateToggle(tabs["Combat"], 130, "Team Check", true, function(state)
+    teamCheckEnabled = state
+    if state and lockedTarget and lockedTarget:IsA("Player") and isTeammate(lockedTarget) then
+        lockedTarget = nil
+    end
+end)
+
+CreateToggle(tabs["Combat"], 170, "Auto Relock", true, function(state)
     autoRelockEnabled = state
 end)
 
-CreateToggle(tabs["Combat"], 170, "Target Info", false, function(state)
+CreateToggle(tabs["Combat"], 210, "Target Info", false, function(state)
     targetInfoEnabled = state
 end)
 
-CreateSectionHeader(tabs["Combat"], 210, "Auto Fire")
+CreateSectionHeader(tabs["Combat"], 250, "Auto Fire")
 
-local _, alkInfo = CreateToggle(tabs["Combat"], 230, "Auto Lock Kill", false, function(state)
+local _, alkInfo = CreateToggle(tabs["Combat"], 270, "Auto Lock Kill", false, function(state)
     autoLockKillEnabled = state
 end)
 alkInfo.setBuilder(function(panel)
@@ -1631,7 +1660,7 @@ alkInfo.setBuilder(function(panel)
     bindFeatureKey(panel, 65, 26, CombatBinds.alk, function(k) CombatBinds.alk = k end)
 end, 52)
 
-local _, rageInfo = CreateToggle(tabs["Combat"], 270, "Rage Bot", false, function(state)
+local _, rageInfo = CreateToggle(tabs["Combat"], 310, "Rage Bot", false, function(state)
     rageBotEnabled = state
     if state then
         
@@ -1696,6 +1725,7 @@ end)()
             {name = "Auto Lock Kill", on = autoLockKillEnabled, key = CombatBinds.alk},
             {name = "Rage Bot", on = rageBotEnabled, key = CombatBinds.rage},
             {name = "Auto Relock", on = autoRelockEnabled and camLockEnabled, key = nil},
+            {name = "Team Check", on = teamCheckEnabled, key = nil},
             {name = "Target Info", on = targetInfoEnabled, key = nil},
             {name = "Hitbox Expander", on = hitboxEnabled, key = nil},
             {name = "Speed", on = speedEnabled, key = nil},
@@ -3796,7 +3826,7 @@ pcall(function()
                     local hum = char:FindFirstChildOfClass("Humanoid")
                     if root and hum and hum.Health > 0 then
                         
-                        if not (player.Team and player.Team == LocalPlayer.Team) then
+                        if not isTeammate(player) then
                             local screenPos, onScreen = Camera:WorldToViewportPoint(root.Position)
                             if onScreen then
                                 local dist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
@@ -3836,15 +3866,18 @@ pcall(function()
             
             local tool = myChar:FindFirstChildOfClass("Tool")
             if tool then pcall(function() tool:Activate() end) end
-            pcall(function() mouse1click() end)
-            pcall(function()
-                local vim = game:GetService("VirtualInputManager")
-                vim:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                vim:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-            end)
-            
+            if not (isMobile or mobileControlsEnabled) then
+                pcall(function() mouse1click() end)
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    vim:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+                    vim:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+                end)
+            end
             if tool then pcall(function() tool:Activate() end) end
-            pcall(function() mouse1click() end)
+            if not (isMobile or mobileControlsEnabled) then
+                pcall(function() mouse1click() end)
+            end
         end
 
         local _, backstabInfo = CreateToggle(tabs["Game"], 25, "Backstab", false, function(state)
@@ -3964,6 +3997,8 @@ pcall(function()
         Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 4)
 
         applyBtn.MouseButton1Click:Connect(function()
+            teamCheckEnabled = true
+            if toggleRegistry["Team Check"] then toggleRegistry["Team Check"].set(true) end
             if isMobile or mobileControlsEnabled then
                 mobileControlsEnabled = true
                 if toggleRegistry["Mobile Controls"] then toggleRegistry["Mobile Controls"].set(true) end
@@ -4161,7 +4196,7 @@ local function getClosestPlayerToCursor()
                     
                 elseif char:FindFirstChildOfClass("ForceField") then
                     
-                elseif player.Team and player.Team == LocalPlayer.Team then
+                elseif isTeammate(player) then
                     
                 elseif root.Position.Magnitude >= 1 and not (myRoot and root.Position.Y < myY - 50) then
                     local state = hum:GetState()
@@ -4421,9 +4456,15 @@ end
 
 local function lockOntoTarget()
     if not camLockEnabled then return false end
-    if lockedTarget then return true end
+    if lockedTarget then
+        if lockedTarget:IsA("Player") and isTeammate(lockedTarget) then
+            lockedTarget = nil
+        else
+            return true
+        end
+    end
     local target = getClosestPlayerToCursor()
-    if target then
+    if target and not (target:IsA("Player") and isTeammate(target)) then
         lockedTarget = target
         if lockFeedbackEnabled then
             local name = (target.DisplayName or target.Name)
@@ -4518,13 +4559,76 @@ table.insert(connections, UserInputService.InputEnded:Connect(function(input)
 end))
 
 
-table.insert(connections, UserInputService.JumpRequest:Connect(function()
-    if infiniteJumpEnabled and LocalPlayer.Character then
-        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+local function doInfiniteJump()
+    if not infiniteJumpEnabled or not scriptActive then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp or hum.Health <= 0 then return end
+
+    local power = 50
+    if jumpPowerEnabled then
+        power = defaultJumpPower
+    elseif hum.UseJumpPower then
+        power = math.max(hum.JumpPower, 50)
+    else
+        local jh = hum.JumpHeight
+        if typeof(jh) == "number" and jh > 0 then
+            power = math.sqrt(2 * workspace.Gravity * jh)
         end
     end
+    power = math.clamp(power, 40, 200)
+
+    pcall(function()
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end)
+    pcall(function()
+        hum.Jump = true
+    end)
+
+    local vel = hrp.AssemblyLinearVelocity
+    hrp.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, power), vel.Z)
+end
+
+local _infJumpHeld = false
+local _infJumpPulseUntil = 0
+local _infJumpLast = 0
+
+table.insert(connections, UserInputService.JumpRequest:Connect(function()
+    if not infiniteJumpEnabled then return end
+    _infJumpPulseUntil = tick() + 0.2
+    doInfiniteJump()
+end))
+
+table.insert(connections, UserInputService.InputBegan:Connect(function(input)
+    if not infiniteJumpEnabled then return end
+    if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
+        _infJumpHeld = true
+        doInfiniteJump()
+    end
+end))
+
+table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
+        _infJumpHeld = false
+    end
+end))
+
+table.insert(connections, RunService.Heartbeat:Connect(function()
+    if not infiniteJumpEnabled or not scriptActive then
+        _infJumpHeld = false
+        return
+    end
+    local jumping = _infJumpHeld
+        or tick() < _infJumpPulseUntil
+        or UserInputService:IsKeyDown(Enum.KeyCode.Space)
+        or UserInputService:IsKeyDown(Enum.KeyCode.ButtonA)
+    if not jumping then return end
+    local now = tick()
+    if now - _infJumpLast < 0.1 then return end
+    _infJumpLast = now
+    doInfiniteJump()
 end))
 
 
@@ -4717,8 +4821,14 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
 end))
 
 
-table.insert(connections, RunService.RenderStepped:Connect(function()
+table.insert(connections, (function()
+    local stepName = "TwilightCamLock"
+    local function updateCamLock()
     if not scriptActive or not camLockEnabled or not lockedTarget then return end
+    if lockedTarget:IsA("Player") and isTeammate(lockedTarget) then
+        lockedTarget = nil
+        return
+    end
     
     local myChar = LocalPlayer.Character
     local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
@@ -4783,9 +4893,17 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
     end
     local camPos = Camera.CFrame.Position
     local targetCF = CFrame.lookAt(camPos, targetPos)
-    
     Camera.CFrame = targetCF
-end))
+    end
+
+    pcall(function() RunService:UnbindFromRenderStep(stepName) end)
+    RunService:BindToRenderStep(stepName, Enum.RenderPriority.Camera.Value + 1, updateCamLock)
+    return {
+        Disconnect = function()
+            pcall(function() RunService:UnbindFromRenderStep(stepName) end)
+        end
+    }
+end)())
 
 
 table.insert(connections, RunService.Heartbeat:Connect(function()
@@ -4828,7 +4946,7 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
                         local root = char:FindFirstChild("HumanoidRootPart")
                         local hum = char:FindFirstChildOfClass("Humanoid")
                         if root and hum and hum.Health > 0 then
-                            if not (player.Team and player.Team == LocalPlayer.Team) then
+                            if not isTeammate(player) then
                                 local dist = (root.Position - myRoot.Position).Magnitude
                                 if dist < closestDist and dist > 1 then
                                     closestDist = dist
@@ -4858,6 +4976,7 @@ local _autoClickReleaseAt = 0
 local _isArsenalPlace = (game.PlaceId == 286090429 or game.PlaceId == 2377868063)
 
 local function getAimSettleDelay()
+    if isMobile or mobileControlsEnabled then return 0.01 end
     if _isArsenalPlace then return 0.01 end
     if rageBotEnabled then return 0.07 end
     if usesSmartAim() then return 0.05 end
@@ -4867,6 +4986,8 @@ end
 local function releaseAutoClick()
     if not _autoClickHeld then return end
     _autoClickHeld = false
+    
+    if isMobile or mobileControlsEnabled then return end
     pcall(function()
         if mouse1release then
             mouse1release()
@@ -4881,6 +5002,16 @@ local function releaseAutoClick()
 end
 
 local function fireAutoClick()
+    
+    if isMobile or mobileControlsEnabled then
+        local myChar2 = LocalPlayer.Character
+        local tool = myChar2 and myChar2:FindFirstChildOfClass("Tool")
+        if tool then
+            pcall(function() tool:Activate() end)
+        end
+        return
+    end
+
     local vp = Camera.ViewportSize
     local cx = math.floor(vp.X / 2 + math.random(-2, 2))
     local cy = math.floor(vp.Y / 2 + math.random(-2, 2))
@@ -4997,7 +5128,7 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
     end
     if _lastAutoKillTarget == lockedTarget and (now - _lastAutoKillTime < baseInterval) then return end
 
-    if aimPoint and not _isArsenalPlace then
+    if aimPoint and not _isArsenalPlace and not (isMobile or mobileControlsEnabled) then
         local camLook = Camera.CFrame.LookVector
         local toTarget = (aimPoint - Camera.CFrame.Position).Unit
         local dot = camLook:Dot(toTarget)
@@ -7253,57 +7384,66 @@ end))
     root.BackgroundTransparency = 1
     root.BorderSizePixel = 0
     root.AnchorPoint = Vector2.new(1, 0.5)
-    root.Position = UDim2.new(1, -10, 0.55, 0)
-    root.Size = UDim2.new(0, 118, 0, 0)
+    root.Position = UDim2.new(1, -12, 0.52, 0)
+    root.Size = UDim2.new(0, 108, 0, 0)
     root.AutomaticSize = Enum.AutomaticSize.Y
     root.ZIndex = 40
     root.Visible = mobileControlsEnabled
 
     local sheet = Instance.new("Frame", root)
     sheet.Name = "Sheet"
-    sheet.BackgroundColor3 = Color3.fromRGB(12, 12, 13)
-    sheet.BackgroundTransparency = 0.12
+    sheet.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    sheet.BackgroundTransparency = 0.08
     sheet.BorderSizePixel = 0
     sheet.Size = UDim2.new(1, 0, 0, 0)
     sheet.AutomaticSize = Enum.AutomaticSize.Y
     sheet.ZIndex = 40
-    Instance.new("UICorner", sheet).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", sheet).CornerRadius = UDim.new(0, 8)
+    do
+        local s = Instance.new("UIStroke", sheet)
+        s.Color = Color3.fromRGB(35, 35, 35)
+        s.Thickness = 1
+        s.Transparency = 0.15
+    end
 
     local pad = Instance.new("UIPadding", sheet)
-    pad.PaddingTop = UDim.new(0, 6)
-    pad.PaddingBottom = UDim.new(0, 6)
-    pad.PaddingLeft = UDim.new(0, 6)
-    pad.PaddingRight = UDim.new(0, 6)
+    pad.PaddingTop = UDim.new(0, 8)
+    pad.PaddingBottom = UDim.new(0, 8)
+    pad.PaddingLeft = UDim.new(0, 8)
+    pad.PaddingRight = UDim.new(0, 8)
 
     local list = Instance.new("UIListLayout", sheet)
     list.SortOrder = Enum.SortOrder.LayoutOrder
-    list.Padding = UDim.new(0, 5)
+    list.Padding = UDim.new(0, 6)
     list.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
     local buttons = {}
     local extraOpen = false
-    local extraBtns = {}
+    local extraRows = {}
     local moreBtn
 
     local grab = Instance.new("TextButton", sheet)
-    grab.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+    grab.BackgroundTransparency = 1
     grab.BorderSizePixel = 0
-    grab.Size = UDim2.new(1, 0, 0, 18)
-    grab.Font = Enum.Font.Gotham
-    grab.Text = "drag · tap = more"
-    grab.TextColor3 = Color3.fromRGB(110, 110, 110)
-    grab.TextSize = 9
+    grab.Size = UDim2.new(1, 0, 0, 14)
+    grab.Text = ""
     grab.AutoButtonColor = false
     grab.ZIndex = 41
     grab.LayoutOrder = 0
-    Instance.new("UICorner", grab).CornerRadius = UDim.new(0, 4)
+    local grabBar = Instance.new("Frame", grab)
+    grabBar.AnchorPoint = Vector2.new(0.5, 0.5)
+    grabBar.Position = UDim2.new(0.5, 0, 0.5, 0)
+    grabBar.Size = UDim2.new(0, 28, 0, 3)
+    grabBar.BackgroundColor3 = Color3.fromRGB(55, 55, 58)
+    grabBar.BorderSizePixel = 0
+    grabBar.ZIndex = 42
+    Instance.new("UICorner", grabBar).CornerRadius = UDim.new(1, 0)
 
     local function setExtras(open)
         extraOpen = open
         if moreBtn then moreBtn.Text = open and "Less" or "More" end
-        grab.Text = open and "drag · tap = less" or "drag · tap = more"
-        for _, b in ipairs(extraBtns) do
-            b.Visible = open
+        for _, row in ipairs(extraRows) do
+            row.Visible = open
         end
     end
 
@@ -7344,38 +7484,62 @@ end))
         end))
     end
 
-    local OFF = Color3.fromRGB(22, 22, 24)
-    local ON = Color3.fromRGB(32, 78, 32)
-    local LOCKED = Color3.fromRGB(28, 70, 100)
+    local COL_OFF = Color3.fromRGB(18, 18, 20)
+    local COL_ON = Color3.fromRGB(32, 32, 34)
+    local COL_LOCK = Color3.fromRGB(38, 38, 40)
+    local TXT_OFF = Color3.fromRGB(150, 150, 150)
+    local TXT_ON = Color3.fromRGB(240, 240, 240)
 
     local function paint(btn, on, locked)
         if not btn then return end
         if locked then
-            btn.BackgroundColor3 = LOCKED
-            btn.TextColor3 = Color3.fromRGB(230, 240, 255)
+            btn.BackgroundColor3 = COL_LOCK
+            btn.TextColor3 = TXT_ON
         elseif on then
-            btn.BackgroundColor3 = ON
-            btn.TextColor3 = Color3.fromRGB(235, 235, 235)
+            btn.BackgroundColor3 = COL_ON
+            btn.TextColor3 = TXT_ON
         else
-            btn.BackgroundColor3 = OFF
-            btn.TextColor3 = Color3.fromRGB(200, 200, 200)
+            btn.BackgroundColor3 = COL_OFF
+            btn.TextColor3 = TXT_OFF
         end
     end
 
-    local function makeBtn(label, order, tall)
-        local b = Instance.new("TextButton", sheet)
-        b.Name = label
-        b.BackgroundColor3 = OFF
+    local function styleBtn(b)
         b.BorderSizePixel = 0
-        b.Size = UDim2.new(1, 0, 0, tall or 38)
-        b.Font = Enum.Font.GothamBold
-        b.Text = label
-        b.TextColor3 = Color3.fromRGB(200, 200, 200)
-        b.TextSize = 12
+        b.Font = Enum.Font.Gotham
+        b.TextSize = 11
         b.AutoButtonColor = false
         b.ZIndex = 41
-        b.LayoutOrder = order
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+        local stroke = Instance.new("UIStroke", b)
+        stroke.Color = Color3.fromRGB(40, 40, 42)
+        stroke.Thickness = 1
+        stroke.Transparency = 0.35
+        return b
+    end
+
+    local function makeRow(order)
+        local row = Instance.new("Frame", sheet)
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 34)
+        row.LayoutOrder = order
+        row.ZIndex = 41
+        local grid = Instance.new("UIListLayout", row)
+        grid.FillDirection = Enum.FillDirection.Horizontal
+        grid.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        grid.Padding = UDim.new(0, 6)
+        grid.SortOrder = Enum.SortOrder.LayoutOrder
+        return row
+    end
+
+    local function makeBtn(parent, label, w, h)
+        local b = Instance.new("TextButton", parent)
+        b.Name = label
+        b.BackgroundColor3 = COL_OFF
+        b.Size = UDim2.new(0, w or 44, 0, h or 34)
+        b.Text = label
+        b.TextColor3 = TXT_OFF
+        styleBtn(b)
         buttons[label] = b
         return b
     end
@@ -7386,51 +7550,62 @@ end))
         reg.set(not reg.get())
     end
 
-    makeBtn("Menu", 1).MouseButton1Click:Connect(function()
-        MainFrame.Visible = not MainFrame.Visible
-    end)
-
-    local lockBtn = makeBtn("Lock", 2, 42)
-    lockBtn.TextSize = 13
+    
+    local row1 = makeRow(1)
+    local lockBtn = makeBtn(row1, "Lock", 44, 36)
+    lockBtn.TextSize = 12
     lockBtn.MouseButton1Click:Connect(function()
         if not camLockEnabled and toggleRegistry["Camera Lock"] then
             toggleRegistry["Camera Lock"].set(true)
         end
         lockOntoTarget()
     end)
-
-    local unlockBtn = makeBtn("Unlock", 3, 42)
-    unlockBtn.TextSize = 13
+    local unlockBtn = makeBtn(row1, "Free", 44, 36)
+    unlockBtn.TextSize = 12
     unlockBtn.MouseButton1Click:Connect(function()
         unlockTarget()
     end)
 
-    makeBtn("Cam", 4).MouseButton1Click:Connect(function() flip("Camera Lock") end)
-    makeBtn("Aim", 5).MouseButton1Click:Connect(function() flip("Aim Radius") end)
+    local row2 = makeRow(2)
+    makeBtn(row2, "Cam", 44, 32).MouseButton1Click:Connect(function() flip("Camera Lock") end)
+    makeBtn(row2, "Aim", 44, 32).MouseButton1Click:Connect(function() flip("Aim Radius") end)
 
-    local modeBtn = makeBtn(fovVisibleOnly and "Open" or "Close", 6, 34)
-    modeBtn.TextSize = 11
+    local row3 = makeRow(3)
+    local modeBtn = makeBtn(row3, fovVisibleOnly and "Open" or "Close", 44, 32)
     modeBtn.MouseButton1Click:Connect(function()
         fovVisibleOnly = not fovVisibleOnly
     end)
+    makeBtn(row3, "Menu", 44, 32).MouseButton1Click:Connect(function()
+        MainFrame.Visible = not MainFrame.Visible
+    end)
 
-    moreBtn = makeBtn("More", 7, 32)
-    moreBtn.TextSize = 11
-    moreBtn.TextColor3 = Color3.fromRGB(160, 160, 160)
+    moreBtn = Instance.new("TextButton", sheet)
+    moreBtn.Name = "More"
+    moreBtn.BackgroundTransparency = 1
+    moreBtn.BorderSizePixel = 0
+    moreBtn.Size = UDim2.new(1, 0, 0, 18)
+    moreBtn.Font = Enum.Font.Gotham
+    moreBtn.Text = "More"
+    moreBtn.TextColor3 = Color3.fromRGB(100, 100, 100)
+    moreBtn.TextSize = 10
+    moreBtn.AutoButtonColor = false
+    moreBtn.ZIndex = 41
+    moreBtn.LayoutOrder = 4
+    buttons.More = moreBtn
 
     local extras = {
-        {"Kill", "Auto Lock Kill"},
-        {"Rage", "Rage Bot"},
-        {"Clip", "Noclip"},
-        {"Speed", "Walk Speed"},
-        {"Jump", "Infinite Jump"},
-        {"TP", "Click Teleport"},
+        {{"Kill", "Auto Lock Kill"}, {"Rage", "Rage Bot"}},
+        {{"Clip", "Noclip"}, {"Speed", "Walk Speed"}},
+        {{"Jump", "Infinite Jump"}, {"TP", "Click Teleport"}},
     }
-    for i, e in ipairs(extras) do
-        local b = makeBtn(e[1], 7 + i)
-        b.Visible = false
-        table.insert(extraBtns, b)
-        b.MouseButton1Click:Connect(function() flip(e[2]) end)
+    for i, pair in ipairs(extras) do
+        local row = makeRow(4 + i)
+        row.Visible = false
+        table.insert(extraRows, row)
+        for _, e in ipairs(pair) do
+            local b = makeBtn(row, e[1], 44, 32)
+            b.MouseButton1Click:Connect(function() flip(e[2]) end)
+        end
     end
 
     moreBtn.MouseButton1Click:Connect(function()
@@ -7450,10 +7625,9 @@ end))
         paint(buttons.Menu, MainFrame.Visible)
         paint(lockBtn, lockedTarget ~= nil, lockedTarget ~= nil)
         paint(unlockBtn, lockedTarget ~= nil)
-        lockBtn.Text = "Lock"
-        unlockBtn.Text = "Unlock"
         modeBtn.Text = fovVisibleOnly and "Open" or "Close"
         paint(modeBtn, fovVisibleOnly)
+        moreBtn.TextColor3 = extraOpen and Color3.fromRGB(180, 180, 180) or Color3.fromRGB(100, 100, 100)
     end
 
     table.insert(connections, RunService.Heartbeat:Connect(sync))
