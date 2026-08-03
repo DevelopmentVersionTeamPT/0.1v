@@ -1,4 +1,3 @@
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -459,6 +458,17 @@ local Act = {}
 Act.disableActive = false
 Act.disableSnapshot = {}
 Act.runDisable = nil
+-- Local-only clones / pads (never treat as real players/NPCs; unique per user for cross-play)
+Act.isTwilightLocalClone = function(inst)
+    if typeof(inst) ~= "Instance" then return false end
+    local n = inst.Name
+    if typeof(n) == "string" then
+        if string.sub(n, 1, 18) == "TwilightInvisGhost" then return true end
+        if string.sub(n, 1, 17) == "TwilightInvisVoid" then return true end
+    end
+    local ok, owner = pcall(function() return inst:GetAttribute("TwilightOwner") end)
+    return ok and owner ~= nil
+end
 
 -- Low-end PC helpers: throttle heavy loops + cache expensive scans
 local Perf = {
@@ -607,54 +617,124 @@ end
 
 local playTwilightLoader = (function()
     local TweenService = game:GetService("TweenService")
-    local SCRIPT_VERSION = "3.3"
+    local SCRIPT_VERSION = "3.6"
 
     local Loader = Instance.new("Frame", ScreenGui)
     Loader.Name = "TwilightLoader"
-    Loader.BackgroundColor3 = Color3.fromRGB(8, 8, 9)
+    Loader.BackgroundColor3 = Color3.fromRGB(6, 6, 7)
     Loader.BorderSizePixel = 0
     Loader.Size = UDim2.new(1, 0, 1, 0)
     Loader.ZIndex = 200
     Loader.Active = true
 
-    local loaderBrand = Instance.new("TextLabel", Loader)
+    -- Soft center lift (same dark UI language, not a loud gradient theme)
+    do
+        local wash = Instance.new("Frame", Loader)
+        wash.Name = "Wash"
+        wash.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+        wash.BorderSizePixel = 0
+        wash.AnchorPoint = Vector2.new(0.5, 0.5)
+        wash.Position = UDim2.new(0.5, 0, 0.46, 0)
+        wash.Size = UDim2.new(0, 420, 0, 220)
+        wash.ZIndex = 201
+        wash.BackgroundTransparency = 1
+        Instance.new("UICorner", wash).CornerRadius = UDim.new(1, 0)
+        local g = Instance.new("UIGradient", wash)
+        g.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.45, 0.82),
+            NumberSequenceKeypoint.new(0.5, 0.78),
+            NumberSequenceKeypoint.new(0.55, 0.82),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+        wash.Name = "CenterWash"
+    end
+
+    local center = Instance.new("Frame", Loader)
+    center.Name = "Center"
+    center.BackgroundTransparency = 1
+    center.AnchorPoint = Vector2.new(0.5, 0.5)
+    center.Position = UDim2.new(0.5, 0, 0.46, 0)
+    center.Size = UDim2.new(0, 320, 0, 96)
+    center.ZIndex = 202
+
+    local brandScale = Instance.new("UIScale", center)
+    brandScale.Scale = 0.97
+
+    local loaderBrand = Instance.new("TextLabel", center)
     loaderBrand.BackgroundTransparency = 1
-    loaderBrand.AnchorPoint = Vector2.new(0.5, 0.5)
-    loaderBrand.Position = UDim2.new(0.5, 0, 0.46, 10)
-    loaderBrand.Size = UDim2.new(0, 320, 0, 40)
+    loaderBrand.AnchorPoint = Vector2.new(0.5, 0)
+    loaderBrand.Position = UDim2.new(0.5, 0, 0, 0)
+    loaderBrand.Size = UDim2.new(1, 0, 0, 40)
     loaderBrand.Font = Enum.Font.BuilderSansBold
     loaderBrand.Text = "Twilight"
-    loaderBrand.TextColor3 = Color3.fromRGB(242, 242, 242)
-    loaderBrand.TextSize = 32
+    loaderBrand.TextColor3 = Color3.fromRGB(245, 245, 247)
+    loaderBrand.TextSize = 34
     loaderBrand.TextTransparency = 1
-    loaderBrand.ZIndex = 202
+    loaderBrand.ZIndex = 203
 
-    local loaderVersion = Instance.new("TextLabel", Loader)
+    local hairline = Instance.new("Frame", center)
+    hairline.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    hairline.BorderSizePixel = 0
+    hairline.AnchorPoint = Vector2.new(0.5, 0)
+    hairline.Position = UDim2.new(0.5, 0, 0, 42)
+    hairline.Size = UDim2.new(0, 0, 0, 1)
+    hairline.BackgroundTransparency = 1
+    hairline.ZIndex = 203
+    do
+        local g = Instance.new("UIGradient", hairline)
+        g.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, 0.55),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+    end
+
+    local loaderVersion = Instance.new("TextLabel", center)
     loaderVersion.BackgroundTransparency = 1
-    loaderVersion.AnchorPoint = Vector2.new(0.5, 0.5)
-    loaderVersion.Position = UDim2.new(0.5, 0, 0.46, 34)
-    loaderVersion.Size = UDim2.new(0, 200, 0, 16)
-    loaderVersion.Font = Enum.Font.BuilderSansBold
+    loaderVersion.AnchorPoint = Vector2.new(0.5, 0)
+    loaderVersion.Position = UDim2.new(0.5, 0, 0, 48)
+    loaderVersion.Size = UDim2.new(1, 0, 0, 16)
+    loaderVersion.Font = Enum.Font.BuilderSansMedium
     loaderVersion.Text = "v" .. SCRIPT_VERSION
-    loaderVersion.TextColor3 = Color3.fromRGB(100, 100, 104)
+    loaderVersion.TextColor3 = Color3.fromRGB(118, 118, 124)
     loaderVersion.TextSize = 12
     loaderVersion.TextTransparency = 1
-    loaderVersion.ZIndex = 202
+    loaderVersion.ZIndex = 203
 
-    local loaderTrack = Instance.new("Frame", Loader)
-    loaderTrack.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+    local loaderTrack = Instance.new("Frame", center)
+    loaderTrack.BackgroundColor3 = Color3.fromRGB(32, 32, 36)
     loaderTrack.BorderSizePixel = 0
-    loaderTrack.AnchorPoint = Vector2.new(0.5, 0.5)
-    loaderTrack.Position = UDim2.new(0.5, 0, 0.46, 56)
-    loaderTrack.Size = UDim2.new(0, 120, 0, 1)
+    loaderTrack.AnchorPoint = Vector2.new(0.5, 0)
+    loaderTrack.Position = UDim2.new(0.5, 0, 0, 74)
+    loaderTrack.Size = UDim2.new(0, 128, 0, 2)
     loaderTrack.BackgroundTransparency = 1
-    loaderTrack.ZIndex = 202
+    loaderTrack.ClipsDescendants = true
+    loaderTrack.ZIndex = 203
+    Instance.new("UICorner", loaderTrack).CornerRadius = UDim.new(1, 0)
 
     local loaderFill = Instance.new("Frame", loaderTrack)
-    loaderFill.BackgroundColor3 = Color3.fromRGB(230, 230, 232)
+    loaderFill.BackgroundColor3 = Color3.fromRGB(236, 236, 240)
     loaderFill.BorderSizePixel = 0
     loaderFill.Size = UDim2.new(0, 0, 1, 0)
-    loaderFill.ZIndex = 203
+    loaderFill.ZIndex = 204
+    Instance.new("UICorner", loaderFill).CornerRadius = UDim.new(1, 0)
+
+    local loaderSheen = Instance.new("Frame", loaderFill)
+    loaderSheen.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    loaderSheen.BorderSizePixel = 0
+    loaderSheen.Size = UDim2.new(0, 18, 1, 0)
+    loaderSheen.Position = UDim2.new(1, -18, 0, 0)
+    loaderSheen.BackgroundTransparency = 0.55
+    loaderSheen.ZIndex = 205
+    do
+        local g = Instance.new("UIGradient", loaderSheen)
+        g.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, 0.2),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+    end
 
     local skipBtn = Instance.new("TextButton", Loader)
     skipBtn.BackgroundTransparency = 1
@@ -673,6 +753,7 @@ local playTwilightLoader = (function()
     local loaderReady = false
     local loaderSkipped = false
     local loaderDone = false
+    local centerWash = Loader:FindFirstChild("CenterWash")
 
     skipBtn.MouseButton1Click:Connect(function()
         loaderSkipped = true
@@ -692,7 +773,12 @@ local playTwilightLoader = (function()
         TweenService:Create(loaderVersion, fadeInfo, {TextTransparency = 1}):Play()
         TweenService:Create(loaderTrack, fadeInfo, {BackgroundTransparency = 1}):Play()
         TweenService:Create(loaderFill, fadeInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(hairline, fadeInfo, {BackgroundTransparency = 1}):Play()
         TweenService:Create(skipBtn, fadeInfo, {TextTransparency = 1}):Play()
+        if centerWash then
+            TweenService:Create(centerWash, fadeInfo, {BackgroundTransparency = 1}):Play()
+        end
+        TweenService:Create(brandScale, fadeInfo, {Scale = 0.985}):Play()
         TweenService:Create(Loader, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
             BackgroundTransparency = 1,
         }):Play()
@@ -707,26 +793,39 @@ local playTwilightLoader = (function()
         if loaderReady then return end
         loaderReady = true
 
+        if centerWash then
+            TweenService:Create(centerWash, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                BackgroundTransparency = 0,
+            }):Play()
+        end
+
+        TweenService:Create(brandScale, TweenInfo.new(0.65, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Scale = 1,
+        }):Play()
         TweenService:Create(loaderBrand, TweenInfo.new(0.55, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             TextTransparency = 0,
-            Position = UDim2.new(0.5, 0, 0.46, 0),
         }):Play()
-        task.wait(0.2)
-        TweenService:Create(loaderVersion, TweenInfo.new(0.3), {TextTransparency = 0}):Play()
-        task.wait(0.08)
+        task.wait(0.18)
+
+        TweenService:Create(hairline, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0, 28, 0, 1),
+            BackgroundTransparency = 0.15,
+        }):Play()
+        TweenService:Create(loaderVersion, TweenInfo.new(0.35), {TextTransparency = 0}):Play()
+        task.wait(0.1)
         if loaderSkipped then finishLoader() return end
 
-        TweenService:Create(loaderTrack, TweenInfo.new(0.25), {BackgroundTransparency = 0}):Play()
-        TweenService:Create(skipBtn, TweenInfo.new(0.25), {TextTransparency = 0}):Play()
+        TweenService:Create(loaderTrack, TweenInfo.new(0.28), {BackgroundTransparency = 0}):Play()
+        TweenService:Create(skipBtn, TweenInfo.new(0.28), {TextTransparency = 0}):Play()
 
-        local marks = {0.3, 0.58, 0.82, 1}
+        local marks = {0.22, 0.48, 0.76, 1}
         for _, t in ipairs(marks) do
             if loaderSkipped then break end
-            TweenService:Create(loaderFill, TweenInfo.new(0.36, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            TweenService:Create(loaderFill, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
                 Size = UDim2.new(t, 0, 1, 0),
             }):Play()
             local t0 = tick()
-            while tick() - t0 < 0.36 do
+            while tick() - t0 < 0.4 do
                 if loaderSkipped then break end
                 task.wait(0.04)
             end
@@ -734,7 +833,7 @@ local playTwilightLoader = (function()
         end
 
         if not loaderSkipped then
-            task.wait(0.1)
+            task.wait(0.12)
         end
         finishLoader()
     end
@@ -951,11 +1050,14 @@ local toggleRegistry = {}
 
 local function syncToggle(name, on)
     local reg = toggleRegistry[name]
-    if reg and reg.setSilent then
-        reg.setSilent(on and true or false)
-    elseif reg then
-        reg.set(on and true or false)
-    end
+    if not reg then return end
+    pcall(function()
+        if reg.setSilent then
+            reg.setSilent(on and true or false)
+        elseif reg.set then
+            reg.set(on and true or false)
+        end
+    end)
 end
 
 local _searchOpen = false
@@ -1319,8 +1421,10 @@ local function CreateToggle(parent, yPos, label, default, callback)
         end,
         setSilent = function(newState)
             state = newState and true or false
-            btn.Text = state and "ON" or "OFF"
-            btn.BackgroundColor3 = state and Color3.fromRGB(40, 88, 48) or Color3.fromRGB(42, 42, 46)
+            pcall(function()
+                btn.Text = state and "ON" or "OFF"
+                btn.BackgroundColor3 = state and Color3.fromRGB(40, 88, 48) or Color3.fromRGB(42, 42, 46)
+            end)
         end,
         get = function()
             return state
@@ -3927,13 +4031,6 @@ tabs["Emote"] = createTabContent()
     end
 
     local function setStatus(text)
-        text = tostring(text or "")
-        if text == "" then return end
-        pcall(function()
-            if twilightNotify then
-                twilightNotify("Emote", text, 2.5)
-            end
-        end)
     end
 
     local function getHumanoid()
@@ -6195,7 +6292,7 @@ local function getClosestPlayerToCursor()
     
     if npcCombatEnabled then
         for _, model in ipairs(workspace:GetDescendants()) do
-            if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") and model:FindFirstChild("HumanoidRootPart") and not Players:GetPlayerFromCharacter(model) then
+            if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") and model:FindFirstChild("HumanoidRootPart") and not Players:GetPlayerFromCharacter(model) and not Act.isTwilightLocalClone(model) then
                 local root = model:FindFirstChild("HumanoidRootPart")
                 local hum = model:FindFirstChildOfClass("Humanoid")
                 if root and hum and hum.Health > 0 then
@@ -6389,16 +6486,6 @@ end
 
 local function unlockTarget()
     if not lockedTarget then return false end
-    if lockFeedbackEnabled then
-        local name = (lockedTarget.DisplayName or lockedTarget.Name)
-        pcall(function()
-            game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = "Unlocked",
-                Text = "You Unlocked From " .. name,
-                Duration = 2
-            })
-        end)
-    end
     clearLockedTarget()
     _manualUnlockGrace = tick() + 0.35
     return true
@@ -6416,16 +6503,6 @@ local function lockOntoTarget()
     local target = getClosestPlayerToCursor()
     if target and not (target:IsA("Player") and H.isTeammate(target)) then
         lockedTarget = target
-        if lockFeedbackEnabled then
-            local name = (target.DisplayName or target.Name)
-            pcall(function()
-                game:GetService("StarterGui"):SetCore("SendNotification", {
-                    Title = "Locked",
-                    Text = "You Locked Onto " .. name,
-                    Duration = 2
-                })
-            end)
-        end
         return true
     end
     return false
@@ -6615,7 +6692,7 @@ end))
 
 table.insert(connections, RunService.Stepped:Connect(function()
     if not scriptActive then return end
-    if not noclipEnabled and not Act.invisActive then return end
+    if not noclipEnabled and not Act.invisActive and not Act.bangActive then return end
     local char = LocalPlayer.Character
     if not char then return end
     local now = tick()
@@ -6804,7 +6881,10 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
     
 
     if lockedTarget and getLockedChar() and hitboxEnabled then
-        local root = getLockedChar():FindFirstChild("HumanoidRootPart")
+        local lockChar = getLockedChar()
+        -- Never mutate another Twilight user's local clones; only expand real characters
+        if lockChar and not Act.isTwilightLocalClone(lockChar) and lockChar ~= LocalPlayer.Character then
+        local root = lockChar:FindFirstChild("HumanoidRootPart")
         if root then
             root.Size = HITBOX_SIZE
             root.CanCollide = false
@@ -6822,6 +6902,7 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
             else
                 root.Transparency = 1
             end
+        end
         end
     end
 
@@ -6873,14 +6954,6 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
             local newTarget = getClosestPlayerToCursor()
             if newTarget and newTarget ~= lockedTarget then
                 lockedTarget = newTarget
-                if lockFeedbackEnabled then
-                    local name = (espNameMode == "Display") and newTarget.DisplayName or newTarget.Name
-                    game:GetService("StarterGui"):SetCore("SendNotification", {
-                        Title = "Twilight",
-                        Text = "Locked: " .. name,
-                        Duration = 1.5
-                    })
-                end
             else
                 lockedTarget = nil
             end
@@ -8612,7 +8685,8 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
             if m:IsA("Model")
                 and m:FindFirstChildOfClass("Humanoid")
                 and m:FindFirstChild("HumanoidRootPart")
-                and not Players:GetPlayerFromCharacter(m) then
+                and not Players:GetPlayerFromCharacter(m)
+                and not Act.isTwilightLocalClone(m) then
                 list[#list + 1] = m
             end
         end
@@ -9947,7 +10021,7 @@ cmdTitle.BackgroundTransparency = 1
 cmdTitle.Position = UDim2.new(0, 0, 0, 0)
 cmdTitle.Size = UDim2.new(1, 0, 1, 0)
 cmdTitle.Font = Enum.Font.BuilderSansMedium
-cmdTitle.Text = "Twilight V3.3"
+cmdTitle.Text = "Twilight V3.6"
 cmdTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
 cmdTitle.TextSize = 12
 cmdTitle.TextXAlignment = Enum.TextXAlignment.Center
@@ -10044,17 +10118,6 @@ Act.tailPhysics.joints = {} -- {joint=, handle=, part0=, baseC0=, baseC1=, mode=
 Act.tailPhysics.motors = nil -- legacy (new local Motor6D path — client-only)
 
 local function tailPhysicsNotify(text)
-    pcall(function()
-        if twilightNotify then
-            twilightNotify("Tail Physics", text, 3)
-        else
-            game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = "Tail Physics",
-                Text = text,
-                Duration = 3,
-            })
-        end
-    end)
 end
 
 local function isTailName(name)
@@ -10925,13 +10988,6 @@ cmdCommands["infzoom"] = function()
     if infZoomEnabled then
         restoreInfZoom()
         syncToggle("Unlimited Zoom", false)
-        pcall(function()
-            game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = "Unlimited Zoom",
-                Text = "Off",
-                Duration = 2,
-            })
-        end)
         return
     end
 
@@ -10945,14 +11001,6 @@ cmdCommands["infzoom"] = function()
     LocalPlayer.CameraMaxZoomDistance = 1e5
     infZoomEnabled = true
     syncToggle("Unlimited Zoom", true)
-
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Unlimited Zoom",
-            Text = "Scroll in/out (distance + FOV)",
-            Duration = 3,
-        })
-    end)
 end
 cmdCommands["uninfzoom"] = function()
     restoreInfZoom()
@@ -11396,47 +11444,111 @@ table.insert(connections, LocalPlayer.CharacterAdded:Connect(function()
 end))
 
 local bangTarget = nil
-local bangConn = nil
 local bangSpeed = 22
+local bangRunning = false
+local bangGen = 0
+Act.bangActive = false
 
 local function stopBang()
+    bangGen = bangGen + 1
     bangTarget = nil
-    if bangConn then
-        pcall(function() bangConn:Disconnect() end)
-        bangConn = nil
+    bangRunning = false
+    Act.bangActive = false
+    local myChar = LocalPlayer.Character
+    local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+    if myHum then
+        pcall(function()
+            myHum.PlatformStand = false
+            myHum.AutoRotate = true
+        end)
     end
 end
 
 local function startBang(target, speed)
     if not target or target == LocalPlayer then return end
+    if Act.invisActive then return end
     stopBang()
     if Act.headSitOff then Act.headSitOff() end
     bangTarget = target
     bangSpeed = math.clamp(tonumber(speed) or 22, 1, 100)
-    bangConn = RunService.Heartbeat:Connect(function()
-        if not scriptActive or not bangTarget then
-            stopBang()
-            return
+    bangRunning = true
+    Act.bangActive = true
+    bangGen = bangGen + 1
+    local gen = bangGen
+    Perf.noclipAt = 0
+
+    -- Heartbeat + PreAnimation sync on LOCAL character only.
+    -- Never write other players' velocity/CFrame (breaks their Twilight / movement).
+    task.spawn(function()
+        local zero = Vector3.zero
+        while bangRunning and bangGen == gen and bangTarget and scriptActive do
+            if Act.invisActive or not bangTarget.Parent then
+                break
+            end
+
+            local tChar = bangTarget.Character
+            local tRoot = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
+            local myChar = LocalPlayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            local myRoot = myHum and (myHum.RootPart or myChar:FindFirstChild("HumanoidRootPart"))
+            if not tRoot or not myRoot or not myHum or myHum.Health <= 0 then
+                RunService.Heartbeat:Wait()
+                continue
+            end
+
+            RunService.Heartbeat:Wait()
+            if not bangRunning or bangGen ~= gen or not bangTarget then break end
+
+            tChar = bangTarget.Character
+            tRoot = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
+            myChar = LocalPlayer.Character
+            myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            myRoot = myHum and (myHum.RootPart or myChar:FindFirstChild("HumanoidRootPart"))
+            if not tRoot or not myRoot or not myHum then
+                continue
+            end
+
+            pcall(function()
+                myHum.PlatformStand = true
+                myHum.AutoRotate = false
+                myHum:ChangeState(Enum.HumanoidStateType.Physics)
+            end)
+            for _, p in ipairs(myChar:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.CanCollide = false
+                end
+            end
+
+            local thrust = 0.9 + math.sin(tick() * bangSpeed) * 0.85
+            myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 0, thrust)
+            myRoot.AssemblyLinearVelocity = zero
+            myRoot.AssemblyAngularVelocity = zero
+
+            RunService.PreAnimation:Wait()
+            if not bangRunning or bangGen ~= gen or not bangTarget then break end
+
+            tRoot = bangTarget.Character and (bangTarget.Character:FindFirstChild("HumanoidRootPart") or bangTarget.Character:FindFirstChild("Torso") or bangTarget.Character:FindFirstChild("UpperTorso"))
+            myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if tRoot and myRoot then
+                thrust = 0.9 + math.sin(tick() * bangSpeed) * 0.85
+                myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 0, thrust)
+                myRoot.AssemblyLinearVelocity = zero
+                myRoot.AssemblyAngularVelocity = zero
+            end
         end
-        if not bangTarget.Parent then
-            stopBang()
-            return
+        if bangGen == gen then
+            bangRunning = false
+            Act.bangActive = false
+            local myChar = LocalPlayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            if myHum then
+                pcall(function()
+                    myHum.PlatformStand = false
+                    myHum.AutoRotate = true
+                end)
+            end
         end
-        local tChar = bangTarget.Character
-        local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
-        local myChar = LocalPlayer.Character
-        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-        if not tRoot or not myRoot or not myHum or myHum.Health <= 0 then
-            return
-        end
-        -- Stay behind them and thrust back/forth on their look axis.
-        local thrust = 0.9 + math.sin(tick() * bangSpeed) * 0.85
-        myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 0, thrust)
-        myRoot.AssemblyLinearVelocity = Vector3.zero
-        myRoot.AssemblyAngularVelocity = Vector3.zero
     end)
-    table.insert(connections, bangConn)
 end
 
 cmdCommands["bang"] = "NEEDS_ARG"
@@ -11652,13 +11764,17 @@ local function clearFlyParts(char)
     if hum then
         pcall(function()
             hum.PlatformStand = false
+            hum.AutoRotate = true
             hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
             hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
             hum:ChangeState(Enum.HumanoidStateType.GettingUp)
         end)
     end
-    flyBodyVel = nil
-    flyBodyGyro = nil
+    if char == LocalPlayer.Character or not (Act.invisGhost and char == Act.invisGhost) then
+        flyBodyVel = nil
+        flyBodyGyro = nil
+    end
 end
 
 local function attachFlyParts(char)
@@ -11673,7 +11789,6 @@ local function attachFlyParts(char)
     end
     if not hrp or not hum or not char.Parent then return false end
 
-    
     local oldBv = hrp:FindFirstChild("XthosFlyVel")
     if oldBv then oldBv:Destroy() end
     local oldBg = hrp:FindFirstChild("XthosFlyGyro")
@@ -11681,97 +11796,124 @@ local function attachFlyParts(char)
 
     pcall(function()
         hum.PlatformStand = true
+        hum.AutoRotate = false
         hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
     end)
 
     flyBodyVel = Instance.new("BodyVelocity")
     flyBodyVel.Name = "XthosFlyVel"
     flyBodyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    flyBodyVel.P = 9e4 -- high = snap to target speed (no coast/drag)
-    flyBodyVel.Velocity = Vector3.new(0, 0, 0)
+    flyBodyVel.P = 1250
+    flyBodyVel.Velocity = Vector3.zero
     flyBodyVel.Parent = hrp
 
     flyBodyGyro = Instance.new("BodyGyro")
     flyBodyGyro.Name = "XthosFlyGyro"
     flyBodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-    flyBodyGyro.P = 50000
-    flyBodyGyro.D = 50 -- low damp = snappy turn, less "heavy" feel
-    flyBodyGyro.CFrame = hrp.CFrame
+    flyBodyGyro.P = 3e5
+    flyBodyGyro.D = 800
+    do
+        local cam = workspace.CurrentCamera
+        if cam then
+            flyBodyGyro.CFrame = CFrame.new(hrp.Position) * (cam.CFrame - cam.CFrame.Position)
+        else
+            flyBodyGyro.CFrame = hrp.CFrame
+        end
+    end
     flyBodyGyro.Parent = hrp
 
-    
     pcall(function()
         hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.CFrame = hrp.CFrame + Vector3.new(0, 4, 0)
+        hrp.AssemblyAngularVelocity = Vector3.zero
     end)
     return true
 end
 
+local function getFlyRoot()
+    if Act.invisActive and Act.invisGhost and Act.invisGhost.Parent then
+        local gr = Act.invisGhost:FindFirstChild("HumanoidRootPart")
+        if gr then return Act.invisGhost, gr, Act.invisGhost:FindFirstChildOfClass("Humanoid") end
+    end
+    local char = LocalPlayer.Character
+    if not char then return nil, nil, nil end
+    return char, char:FindFirstChild("HumanoidRootPart"), char:FindFirstChildOfClass("Humanoid")
+end
+
 local function ensureFlyLoop()
     if flyConnection then return end
-    flyConnection = RunService.RenderStepped:Connect(function()
+    flyConnection = RunService.Heartbeat:Connect(function()
         if not flyActive then return end
-        local c = LocalPlayer.Character
-        if not c or not c.Parent then return end
-        local root = c:FindFirstChild("HumanoidRootPart")
-        local h = c:FindFirstChildOfClass("Humanoid")
-        if not root or not h or h.Health <= 0 then return end
+
+        local c, root, h = getFlyRoot()
+        if not c or not root or not h or h.Health <= 0 then return end
 
         local bvel = root:FindFirstChild("XthosFlyVel")
         local bgyro = root:FindFirstChild("XthosFlyGyro")
         if not bvel or not bgyro then
-            attachFlyParts(c)
+            if not attachFlyParts(c) then return end
             bvel = root:FindFirstChild("XthosFlyVel")
             bgyro = root:FindFirstChild("XthosFlyGyro")
-            if not bvel then return end
+            if not bvel or not bgyro then return end
         end
 
-        h.PlatformStand = true
+        pcall(function()
+            h.PlatformStand = true
+            h.AutoRotate = false
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
 
         local cam = workspace.CurrentCamera
-        local velocity = Vector3.zero
+        if not cam then return end
+
+        local cf = cam.CFrame
+        local look = cf.LookVector
+        local right = cf.RightVector
+
+        local move = Vector3.zero
         if not UserInputService:GetFocusedTextBox() then
-            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-                velocity = velocity + cam.CFrame.LookVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-                velocity = velocity - cam.CFrame.LookVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-                velocity = velocity - cam.CFrame.RightVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-                velocity = velocity + cam.CFrame.RightVector
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                velocity = velocity + Vector3.new(0, 1, 0)
-            end
-            if UserInputService:IsKeyDown(Enum.KeyCode.E) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-                velocity = velocity - Vector3.new(0, 1, 0)
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + look end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - look end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - right end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + right end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0, 1, 0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.E)
+                or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+                or UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+                move = move - Vector3.new(0, 1, 0)
             end
         end
 
-        if velocity.Magnitude > 0 then
-            velocity = velocity.Unit * FLY_SPEED
+        if move.Magnitude > 0.05 then
+            bvel.Velocity = move.Unit * FLY_SPEED
+        else
+            bvel.Velocity = Vector3.zero
         end
 
-        -- Force exact velocity every frame (kills BodyVelocity coast/drag)
-        bvel.P = 9e4
-        bvel.Velocity = velocity
-        root.AssemblyLinearVelocity = velocity
-        if bgyro then
-            bgyro.CFrame = cam.CFrame
-        end
+        -- Character aims with camera (look down = face down)
+        local aimCF = CFrame.new(root.Position) * (cf - cf.Position)
+        bgyro.CFrame = aimCF
+        bgyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        bgyro.P = 3e5
+        root.CFrame = aimCF
     end)
 end
 
 local function startFly(speed)
-    if speed then FLY_SPEED = speed end
+    if speed then FLY_SPEED = tonumber(speed) or FLY_SPEED end
     flyActive = true
     syncToggle("Fly", true)
     ensureFlyLoop()
-    local char = LocalPlayer.Character
+    local real = LocalPlayer.Character
+    local char = real
+    if Act.invisActive and Act.invisGhost and Act.invisGhost.Parent then
+        char = Act.invisGhost
+        -- Don't leave movers on the buried real body
+        if real and real ~= char then
+            clearFlyParts(real)
+        end
+    end
     if char then
         attachFlyParts(char)
     end
@@ -11786,6 +11928,9 @@ cmdCommands["unfly"] = function()
         flyConnection = nil
     end
     clearFlyParts(LocalPlayer.Character)
+    if Act.invisGhost and Act.invisGhost.Parent then
+        clearFlyParts(Act.invisGhost)
+    end
 end
 Act.flyOn = startFly
 Act.flyOff = cmdCommands["unfly"]
@@ -11794,8 +11939,11 @@ table.insert(connections, LocalPlayer.CharacterAdded:Connect(function(char)
     if not flyActive then return end
     task.spawn(function()
         task.wait(0.15)
-        if not flyActive or not char or not char.Parent then return end
-        attachFlyParts(char)
+        if not flyActive then return end
+        local flyChar = select(1, getFlyRoot()) or char
+        if flyChar and flyChar.Parent then
+            attachFlyParts(flyChar)
+        end
         ensureFlyLoop()
     end)
 end))
@@ -11911,7 +12059,6 @@ Act.destroy = cmdCommands["destroy"]
 cmdCommands["copyid"] = function()
     if setclipboard then
         setclipboard(tostring(LocalPlayer.UserId))
-        game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Copied", Text = "User ID copied", Duration = 2})
     end
 end
 cmdCommands["copypos"] = function()
@@ -11920,25 +12067,21 @@ cmdCommands["copypos"] = function()
     if hrp and setclipboard then
         local p = hrp.Position
         setclipboard(math.floor(p.X) .. ", " .. math.floor(p.Y) .. ", " .. math.floor(p.Z))
-        game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Copied", Text = "Position copied", Duration = 2})
     end
 end
 cmdCommands["copyjobid"] = function()
     if setclipboard then
         setclipboard(game.JobId)
-        game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Copied", Text = "Server ID copied", Duration = 2})
     end
 end
 cmdCommands["copyplaceid"] = function()
     if setclipboard then
         setclipboard(tostring(game.PlaceId))
-        game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Copied", Text = "Place ID copied", Duration = 2})
     end
 end
 cmdCommands["copyname"] = function()
     if setclipboard then
         setclipboard(LocalPlayer.Name)
-        game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Copied", Text = "Username copied", Duration = 2})
     end
 end
 cmdCommands["serverhop"] = function()
@@ -11961,13 +12104,6 @@ end
 Act.serverHop = cmdCommands["serverhop"]
 
 local function twilightNotify(title, text, dur)
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = title,
-            Text = text,
-            Duration = dur or 4,
-        })
-    end)
 end
 
 local function twilightHttpRequest(opts)
@@ -12192,17 +12328,33 @@ Act.freezeOn = cmdCommands["freeze"]
 Act.freezeOff = cmdCommands["unfreeze"]
 
 ;(function()
-    -- Stay UNDER the map the whole time invis is on (not a flicker).
-    -- Flicker only replicates when you move — that's why standing still did nothing.
-    -- CameraOffset keeps YOUR view at surface height; BodyVelocity stops freefall + walks.
-    Act.invisTeleportY = -100 -- below map, shallow enough to still hear voices
-    local VISUAL_TRANSPARENCY = 0.7
-    local MOVE_SPEED = 16
-    local BV_NAME = "TwilightInvisVel"
-    local BG_NAME = "TwilightInvisGyro"
-    local savedTrans = {}
+    -- FE invis: real Character stays yours (burial replicates).
+    -- Local ghost clone is what you see/control on the surface.
+    -- Names are per-UserId so two Twilight users never clobber each other's pads/ghosts.
+    Act.invisTeleportY = -100
+    local GHOST_TRANS = 0.4
+    local uidSuffix = tostring(LocalPlayer.UserId)
+    local GHOST_NAME = "TwilightInvisGhost_" .. uidSuffix
+    local VOID_NAME = "TwilightInvisVoid_" .. uidSuffix
     local loopConn = nil
-    local buried = false -- true once we've snapped under
+    local camConn = nil
+    local ghost = nil
+    local ghostRoot = nil
+    local ghostHum = nil
+    local realChar = nil
+    local voidPart = nil
+    local savedCamSubject = nil
+    local savedTrans = {}
+    local buriedGroundY = nil
+    local animTracks = {}
+    local currentAnim = nil
+
+    local function isOwnLocalProp(inst)
+        if not inst then return false end
+        if inst.Name == GHOST_NAME or inst.Name == VOID_NAME then return true end
+        local ok, owner = pcall(function() return inst:GetAttribute("TwilightOwner") end)
+        return ok and owner == LocalPlayer.UserId
+    end
 
     local function invisDy()
         local dy = tonumber(Act.invisTeleportY) or -100
@@ -12211,69 +12363,317 @@ Act.freezeOff = cmdCommands["unfreeze"]
         return dy
     end
 
-    local function restoreTransparency()
-        for obj, t in pairs(savedTrans) do
-            if obj and obj.Parent then
-                pcall(function() obj.Transparency = t end)
-            end
-        end
-        savedTrans = {}
-    end
-
-    local function applyTransparency(char)
-        restoreTransparency()
-        if not char then return end
-        for _, obj in ipairs(char:GetDescendants()) do
-            if obj:IsA("BasePart") or obj:IsA("Decal") or obj:IsA("Texture") then
-                savedTrans[obj] = obj.Transparency
-                pcall(function() obj.Transparency = VISUAL_TRANSPARENCY end)
-            end
-        end
-        for _, torsoName in ipairs({"Torso", "UpperTorso", "LowerTorso"}) do
-            local torso = char:FindFirstChild(torsoName)
-            if torso then
-                for _, child in ipairs(torso:GetDescendants()) do
-                    if child:IsA("BasePart") or child:IsA("Decal") or child:IsA("Texture") then
-                        if savedTrans[child] == nil then
-                            savedTrans[child] = child.Transparency
-                        end
-                        pcall(function() child.Transparency = 1 end)
-                    end
+    local function setControlsEnabled(on)
+        -- Avoid require(PlayerModule) — some executors throw "lacking capability Plugin".
+        pcall(function()
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                if on then
+                    hum.PlatformStand = false
+                    hum.AutoRotate = true
+                else
+                    hum.PlatformStand = true
+                    hum.AutoRotate = false
+                    hum:Move(Vector3.zero, false)
                 end
             end
+        end)
+    end
+
+    local function destroyVoid()
+        if voidPart then pcall(function() voidPart:Destroy() end) end
+        voidPart = nil
+        pcall(function()
+            local old = workspace:FindFirstChild(VOID_NAME)
+            if old and isOwnLocalProp(old) then old:Destroy() end
+        end)
+    end
+
+    local function destroyGhost()
+        currentAnim = nil
+        for _, t in pairs(animTracks) do
+            pcall(function() t:Stop(0) end)
+        end
+        animTracks = {}
+        if ghost then pcall(function() ghost:Destroy() end) end
+        ghost = nil
+        ghostRoot = nil
+        ghostHum = nil
+        Act.invisGhost = nil
+        Act.invisGhostRoot = nil
+        Act.invisGhostHum = nil
+        pcall(function()
+            local leftover = workspace:FindFirstChild(GHOST_NAME)
+            if leftover and isOwnLocalProp(leftover) then leftover:Destroy() end
+        end)
+    end
+
+    local function resolveBuryY(xzPos)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local filter = {}
+        if realChar then filter[#filter + 1] = realChar end
+        if ghost then filter[#filter + 1] = ghost end
+        if voidPart then filter[#filter + 1] = voidPart end
+        params.FilterDescendantsInstances = filter
+        local hit = workspace:Raycast(Vector3.new(xzPos.X, 800, xzPos.Z), Vector3.new(0, -2500, 0), params)
+        local groundY = hit and hit.Position.Y or buriedGroundY or 0
+        buriedGroundY = groundY
+        return groundY + invisDy()
+    end
+
+    local function ensureVoid(surfaceCF)
+        local pos = (surfaceCF or CFrame.new()).Position
+        local buryY = resolveBuryY(pos)
+        local under = CFrame.new(pos.X, buryY - 5, pos.Z)
+        if not voidPart or not voidPart.Parent then
+            destroyVoid()
+            local p = Instance.new("Part")
+            p.Name = VOID_NAME
+            p.Anchored = true
+            p.CanCollide = true
+            p.Transparency = 1
+            p.Size = Vector3.new(80, 1, 80)
+            pcall(function()
+                p:SetAttribute("TwilightOwner", LocalPlayer.UserId)
+                p:SetAttribute("TwilightLocal", true)
+            end)
+            p.Parent = workspace
+            voidPart = p
+        end
+        voidPart.CFrame = under
+        return voidPart, buryY
+    end
+
+    local function setRealLocalHidden(char, hidden)
+        if not char then return end
+        if hidden then
+            for _, d in ipairs(char:GetDescendants()) do
+                pcall(function()
+                    if d:IsA("BasePart") then
+                        if savedTrans[d] == nil then
+                            savedTrans[d] = { t = d.Transparency, ltm = d.LocalTransparencyModifier }
+                        end
+                        d.Transparency = 1
+                        d.LocalTransparencyModifier = 1
+                        d.CanCollide = false
+                    elseif d:IsA("Decal") or d:IsA("Texture") then
+                        if savedTrans[d] == nil then savedTrans[d] = { t = d.Transparency } end
+                        d.Transparency = 1
+                    elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                        or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
+                        d.Enabled = false
+                    elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+                        d.Enabled = false
+                    elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+                        d.Enabled = false
+                    end
+                end)
+            end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function()
+                    hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                    hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+                    hum.NameDisplayDistance = 0
+                    hum.HealthDisplayDistance = 0
+                    hum.PlatformStand = true
+                    hum.CameraOffset = Vector3.zero
+                end)
+            end
+        else
+            for obj, data in pairs(savedTrans) do
+                pcall(function()
+                    if obj and obj.Parent then
+                        if obj:IsA("BasePart") then
+                            obj.Transparency = data.t or 0
+                            obj.LocalTransparencyModifier = data.ltm or 0
+                        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                            obj.Transparency = data.t or 0
+                        end
+                    end
+                end)
+            end
+            savedTrans = {}
         end
     end
 
-    local function clearHoldParts(root)
+    local function pinRealUnder(surfaceCF)
+        local char = realChar
+        if not char or not char.Parent then
+            char = LocalPlayer.Character
+            if not char or Act.isTwilightLocalClone(char) or char.Name == GHOST_NAME then return end
+            realChar = char
+        end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
         if not root then return end
-        local bv = root:FindFirstChild(BV_NAME)
-        if bv then pcall(function() bv:Destroy() end) end
-        local bg = root:FindFirstChild(BG_NAME)
-        if bg then pcall(function() bg:Destroy() end) end
+        local pos = (surfaceCF or root.CFrame).Position
+        local _, buryY = ensureVoid(surfaceCF or root.CFrame)
+        local rot = (surfaceCF or root.CFrame) - (surfaceCF or root.CFrame).Position
+        local cf = CFrame.new(pos.X, buryY, pos.Z) * rot
+        for _, p in ipairs(char:GetDescendants()) do
+            pcall(function()
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end)
+        end
+        pcall(function()
+            root.CFrame = cf
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            if hum then
+                hum.PlatformStand = true
+                hum.AutoRotate = false
+            end
+        end)
+        setRealLocalHidden(char, true)
     end
 
-    local function ensureHoldParts(root)
-        if not root then return nil, nil end
-        local bv = root:FindFirstChild(BV_NAME)
-        if not bv then
-            bv = Instance.new("BodyVelocity")
-            bv.Name = BV_NAME
-            bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            bv.P = 1250
-            bv.Velocity = Vector3.zero
-            bv.Parent = root
+    local function playGhostAnim(name, fade)
+        if not animTracks[name] then return end
+        if currentAnim == name then return end
+        fade = fade or 0.15
+        for n, t in pairs(animTracks) do
+            if n ~= name then
+                pcall(function() t:Stop(fade) end)
+            end
         end
-        local bg = root:FindFirstChild(BG_NAME)
-        if not bg then
-            bg = Instance.new("BodyGyro")
-            bg.Name = BG_NAME
-            bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-            bg.P = 3000
-            bg.D = 500
-            bg.CFrame = root.CFrame
-            bg.Parent = root
+        pcall(function() animTracks[name]:Play(fade) end)
+        currentAnim = name
+    end
+
+    local function stopGhostAnims(fade)
+        fade = fade or 0.1
+        for _, t in pairs(animTracks) do
+            pcall(function() t:Stop(fade) end)
         end
-        return bv, bg
+        currentAnim = nil
+    end
+
+    local function setupGhostAnims(hum)
+        currentAnim = nil
+        animTracks = {}
+        if not hum then return end
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if not animator then
+            animator = Instance.new("Animator")
+            animator.Parent = hum
+        end
+        local ids = {
+            idle = "rbxassetid://507766666",
+            walk = "rbxassetid://507777826",
+            run = "rbxassetid://507767714",
+            jump = "rbxassetid://507765000",
+            fall = "rbxassetid://507767968",
+        }
+        for name, id in pairs(ids) do
+            local ok, track = pcall(function()
+                local a = Instance.new("Animation")
+                a.AnimationId = id
+                return animator:LoadAnimation(a)
+            end)
+            if ok and track then
+                pcall(function()
+                    track.Looped = (name == "idle" or name == "walk" or name == "run")
+                    track.Priority = Enum.AnimationPriority.Movement
+                end)
+                animTracks[name] = track
+            end
+        end
+    end
+
+    local function createGhost(char, atCF)
+        destroyGhost()
+        if not char then return false end
+        local wasArch = char.Archivable
+        char.Archivable = true
+        local ok, g = pcall(function() return char:Clone() end)
+        char.Archivable = wasArch
+        if not ok or not g then return false end
+
+        g.Name = GHOST_NAME
+        pcall(function()
+            g:SetAttribute("TwilightOwner", LocalPlayer.UserId)
+            g:SetAttribute("TwilightLocal", true)
+        end)
+        local function isInsideTorso(inst)
+            local p = inst.Parent
+            while p and p ~= g do
+                if p.Name == "Torso" or p.Name == "UpperTorso" or p.Name == "LowerTorso" then
+                    return true
+                end
+                p = p.Parent
+            end
+            return false
+        end
+        -- Strip anything that often trips executor security / Plugin capability errors
+        for _, d in ipairs(g:GetDescendants()) do
+            pcall(function()
+                local className = d.ClassName
+                if className == "Script" or className == "LocalScript" or className == "ModuleScript"
+                    or className == "ForceField" or className == "Highlight" or className == "Tool"
+                    or className == "WrapLayer" or className == "WrapTarget" or className == "PackageLink"
+                    or className == "SurfaceAppearance" or className == "HumanoidDescription" then
+                    d:Destroy()
+                    return
+                end
+                if d:IsA("BasePart") then
+                    d.Anchored = false
+                    d.CanCollide = (d.Name ~= "HumanoidRootPart")
+                    d.CanQuery = false
+                    if d.Name == "HumanoidRootPart" then
+                        d.Transparency = 1
+                        d.LocalTransparencyModifier = 1
+                        d.CanCollide = false
+                    elseif isInsideTorso(d) then
+                        -- Keep the part, just fully hide nested torso contents
+                        d.Transparency = 1
+                        d.LocalTransparencyModifier = 1
+                    else
+                        d.Transparency = math.clamp(math.max(d.Transparency, GHOST_TRANS), 0, 0.85)
+                    end
+                elseif d:IsA("Decal") or d:IsA("Texture") then
+                    if isInsideTorso(d) then
+                        d.Transparency = 1
+                    else
+                        d.Transparency = math.clamp(math.max(d.Transparency, GHOST_TRANS), 0, 0.85)
+                    end
+                end
+            end)
+        end
+
+        local gr = g:FindFirstChild("HumanoidRootPart")
+        local gh = g:FindFirstChildOfClass("Humanoid")
+        if gh then
+            pcall(function()
+                gh.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                gh.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+                gh.NameDisplayDistance = 0
+                gh.PlatformStand = false
+                gh.AutoRotate = true
+                gh.WalkSpeed = speedEnabled and defaultSpeed or 16
+                gh.JumpPower = jumpPowerEnabled and defaultJumpPower or 50
+                gh.UseJumpPower = true
+            end)
+        end
+
+        local parentOk = pcall(function() g.Parent = workspace end)
+        if not parentOk then
+            pcall(function() g:Destroy() end)
+            return false
+        end
+        if atCF then pcall(function() g:PivotTo(atCF) end) end
+        ghost = g
+        ghostRoot = gr or g.PrimaryPart
+        ghostHum = gh
+        Act.invisGhost = ghost
+        Act.invisGhostRoot = ghostRoot
+        Act.invisGhostHum = ghostHum
+        if ghostRoot then pcall(function() g.PrimaryPart = ghostRoot end) end
+        setupGhostAnims(ghostHum)
+        playGhostAnim("idle", 0)
+        return ghostRoot ~= nil and ghostHum ~= nil
     end
 
     local function getMoveFlat()
@@ -12284,7 +12684,6 @@ Act.freezeOff = cmdCommands["unfreeze"]
         right = Vector3.new(right.X, 0, right.Z)
         if look.Magnitude > 0.05 then look = look.Unit else look = Vector3.new(0, 0, -1) end
         if right.Magnitude > 0.05 then right = right.Unit else right = Vector3.new(1, 0, 0) end
-
         local dir = Vector3.zero
         if not UserInputService:GetFocusedTextBox() then
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + look end
@@ -12292,74 +12691,91 @@ Act.freezeOff = cmdCommands["unfreeze"]
             if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - right end
             if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + right end
         end
-        -- Mobile / thumbstick
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum and hum.MoveDirection.Magnitude > 0.05 then
-            local md = Vector3.new(hum.MoveDirection.X, 0, hum.MoveDirection.Z)
-            if md.Magnitude > 0.05 then
-                if dir.Magnitude < 0.05 then
-                    dir = md
-                end
-            end
-        end
         if dir.Magnitude > 0.05 then return dir.Unit end
         return Vector3.zero
     end
 
-    local function walkSpeed()
-        if speedEnabled then return math.max(defaultSpeed, 8) end
-        return MOVE_SPEED
+    local function stopLoop()
+        if loopConn then pcall(function() loopConn:Disconnect() end) loopConn = nil end
+        if camConn then pcall(function() camConn:Disconnect() end) camConn = nil end
     end
 
     local function ensureLoop()
         if loopConn then return end
+
         loopConn = RunService.Heartbeat:Connect(function()
             if not Act.invisActive then return end
             local char = LocalPlayer.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if not char or Act.isTwilightLocalClone(char) or char.Name == GHOST_NAME then return end
+            realChar = char
+            local root = char:FindFirstChild("HumanoidRootPart")
+            local hum = char:FindFirstChildOfClass("Humanoid")
             if not root or not hum or hum.Health <= 0 then return end
+            if not ghost or not ghost.Parent or not ghostRoot or not ghostHum then return end
 
-            local dy = invisDy()
-            -- Stay under every frame (idle still replicates — no flicker)
-            if not buried then
-                root.CFrame = root.CFrame * CFrame.new(0, dy, 0)
-                buried = true
-            end
-
-            hum.CameraOffset = Vector3.new(0, -dy, 0)
             pcall(function()
-                hum.PlatformStand = true
-                hum:ChangeState(Enum.HumanoidStateType.Physics)
+                if LocalPlayer.Character == ghost then
+                    LocalPlayer.Character = char
+                end
             end)
 
-            local bv, bg = ensureHoldParts(root)
-            local move = getMoveFlat()
-            local spd = walkSpeed()
-
-            if bv then
-                if move.Magnitude > 0.05 then
-                    -- Horizontal only — no fly while invis
-                    bv.Velocity = Vector3.new(move.X * spd, 0, move.Z * spd)
+            local flying = flyActive == true
+            if not flying then
+                pcall(function()
+                    ghostHum.PlatformStand = false
+                    ghostHum.AutoRotate = true
+                    ghostHum.WalkSpeed = speedEnabled and defaultSpeed or 16
+                    ghostHum.JumpPower = jumpPowerEnabled and defaultJumpPower or 50
+                    ghostHum.UseJumpPower = true
+                end)
+                local move = getMoveFlat()
+                pcall(function() ghostHum:Move(move, false) end)
+                if not UserInputService:GetFocusedTextBox()
+                    and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                    pcall(function() ghostHum.Jump = true end)
+                end
+                local stateOk, state = pcall(function() return ghostHum:GetState() end)
+                local vel = ghostRoot.AssemblyLinearVelocity
+                local flatSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+                if stateOk and state == Enum.HumanoidStateType.Jumping then
+                    playGhostAnim("jump", 0.1)
+                elseif stateOk and state == Enum.HumanoidStateType.Freefall then
+                    playGhostAnim("fall", 0.15)
+                elseif flatSpeed > 14 then
+                    playGhostAnim("run", 0.15)
+                elseif flatSpeed > 1 then
+                    playGhostAnim("walk", 0.15)
                 else
-                    -- Hold still underground (no fall / no float). Tiny XZ noise keeps net awake.
-                    local t = os.clock() * 8
-                    bv.Velocity = Vector3.new(math.sin(t) * 0.15, 0, math.cos(t) * 0.15)
+                    playGhostAnim("idle", 0.2)
                 end
+            else
+                pcall(function()
+                    ghostHum:Move(Vector3.zero, false)
+                    ghostHum.PlatformStand = true
+                    ghostHum.AutoRotate = false
+                end)
+                stopGhostAnims(0.1)
             end
-            if bg then
+
+            pinRealUnder(ghostRoot.CFrame)
+        end)
+
+        camConn = RunService.RenderStepped:Connect(function()
+            if not Act.invisActive then return end
+            if not ghostHum or not ghostHum.Parent then return end
+            pcall(function()
                 local cam = workspace.CurrentCamera
-                if cam then
-                    local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
-                    if flat.Magnitude > 0.05 then
-                        bg.CFrame = CFrame.lookAt(root.Position, root.Position + flat.Unit)
-                    else
-                        bg.CFrame = root.CFrame
-                    end
+                if cam and cam.CameraSubject ~= ghostHum then
+                    cam.CameraSubject = ghostHum
                 end
+            end)
+            if ghostRoot and ghostRoot.Parent then
+                pinRealUnder(ghostRoot.CFrame)
             end
         end)
+
         table.insert(connections, loopConn)
+        table.insert(connections, camConn)
     end
 
     local function stopInvis()
@@ -12369,33 +12785,66 @@ Act.freezeOff = cmdCommands["unfreeze"]
         end
         Act.invisActive = false
         syncToggle("Invisible", false)
+        stopLoop()
+        setControlsEnabled(true)
 
         if Act._invisDied then
             pcall(function() Act._invisDied:Disconnect() end)
             Act._invisDied = nil
         end
 
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local surfaceCF = ghostRoot and ghostRoot.Parent and ghostRoot.CFrame or nil
+        local real = realChar or LocalPlayer.Character
+        if real and (real.Name == GHOST_NAME or Act.isTwilightLocalClone(real)) then real = nil end
+        local rRoot = real and real:FindFirstChild("HumanoidRootPart")
+        local rHum = real and real:FindFirstChildOfClass("Humanoid")
 
-        if buried and root then
-            local dy = invisDy()
+        if real and real.Parent then
+            if surfaceCF and rRoot then
+                pcall(function()
+                    rRoot.CFrame = surfaceCF
+                    rRoot.AssemblyLinearVelocity = Vector3.zero
+                end)
+            end
+            setRealLocalHidden(real, false)
+            for _, p in ipairs(real:GetDescendants()) do
+                pcall(function()
+                    if p:IsA("BasePart") then
+                        p.Anchored = false
+                        p.CanCollide = (p.Name ~= "HumanoidRootPart")
+                    end
+                end)
+            end
+            if rRoot then pcall(function() rRoot.CanCollide = false end) end
+            if rHum then
+                pcall(function()
+                    rHum.PlatformStand = false
+                    rHum.AutoRotate = true
+                    rHum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+                    rHum.NameDisplayDistance = 100
+                    rHum.CameraOffset = Vector3.zero
+                    rHum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end)
+            end
             pcall(function()
-                root.CFrame = root.CFrame * CFrame.new(0, -dy, 0)
-                root.AssemblyLinearVelocity = Vector3.zero
+                local cam = workspace.CurrentCamera
+                if cam and rHum then
+                    cam.CameraSubject = rHum
+                elseif cam and savedCamSubject then
+                    cam.CameraSubject = savedCamSubject
+                end
             end)
         end
-        buried = false
-        clearHoldParts(root)
+        savedCamSubject = nil
 
-        restoreTransparency()
-        if hum then
-            pcall(function()
-                hum.CameraOffset = Vector3.zero
-                hum.PlatformStand = false
-                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end)
+        destroyGhost()
+        destroyVoid()
+        realChar = nil
+        buriedGroundY = nil
+
+        -- Rebind fly to real character after leaving ghost
+        if flyActive and Act.flyOn then
+            pcall(function() Act.flyOn() end)
         end
     end
 
@@ -12404,31 +12853,52 @@ Act.freezeOff = cmdCommands["unfreeze"]
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not char or not hrp or not hum then
+        if not char or not hrp or not hum or char.Name == GHOST_NAME or Act.isTwilightLocalClone(char) then
             syncToggle("Invisible", false)
             return
         end
 
-        if Act.freecamOff then pcall(Act.freecamOff) end
-        if Act.stopSpectate then pcall(Act.stopSpectate) end
-        if Act.flyOff then pcall(Act.flyOff) end
+        pcall(function() if Act.freecamOff then Act.freecamOff() end end)
+        pcall(function() if Act.stopSpectate then Act.stopSpectate() end end)
+        pcall(function() if Act.bangOff then Act.bangOff() end end)
+        pcall(function() if Act.orbitOff then Act.orbitOff() end end)
+        pcall(function() if Act.headSitOff then Act.headSitOff() end end)
+        -- Keep fly on; rebind to ghost after spawn (do not call flyOff)
 
-        buried = false
-        ensureLoop()
-        applyTransparency(char)
+        destroyGhost()
+        destroyVoid()
+        buriedGroundY = nil
+        realChar = char
+
+        local cam = workspace.CurrentCamera
+        pcall(function()
+            if cam then savedCamSubject = cam.CameraSubject end
+        end)
+
+        -- Keep current air/ground position (don't snap down to baseplate)
+        local spawnCF = hrp.CFrame
+        if not createGhost(char, spawnCF) then
+            realChar = nil
+            syncToggle("Invisible", false)
+            return
+        end
+
+        pcall(function() hum:UnequipTools() end)
+        setControlsEnabled(false)
+        pinRealUnder(spawnCF)
+        pcall(function()
+            if cam and ghostHum then
+                cam.CameraSubject = ghostHum
+            end
+        end)
+
         Act.invisActive = true
         syncToggle("Invisible", true)
+        ensureLoop()
 
-        -- Snap under immediately so ghost works before you walk
-        local dy = invisDy()
-        hrp.CFrame = hrp.CFrame * CFrame.new(0, dy, 0)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hum.CameraOffset = Vector3.new(0, -dy, 0)
-        buried = true
-        ensureHoldParts(hrp)
-        pcall(function()
-            hum.PlatformStand = true
-        end)
+        if flyActive and Act.flyOn then
+            pcall(function() Act.flyOn() end)
+        end
 
         if Act._invisDied then
             pcall(function() Act._invisDied:Disconnect() end)
@@ -12453,6 +12923,14 @@ Act.freezeOff = cmdCommands["unfreeze"]
     cmdCommands["uninvisible"] = cmdCommands["uninvis"]
     Act.invisOn = startInvis
     Act.invisOff = stopInvis
+
+    table.insert(connections, LocalPlayer.CharacterAdded:Connect(function()
+        if Act.invisActive then
+            task.defer(function()
+                if Act.invisActive then stopInvis() end
+            end)
+        end
+    end))
 end)()
 
 
@@ -12461,7 +12939,6 @@ local antiAfkConnection = nil
 cmdCommands["antiafk"] = function()
     if antiAfkActive then
         syncToggle("Anti AFK", true)
-        game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Anti-AFK", Text = "Already active", Duration = 2})
         return
     end
     antiAfkActive = true
@@ -12472,7 +12949,6 @@ cmdCommands["antiafk"] = function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new())
     end)
-    game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Anti-AFK", Text = "Enabled -- you won't be kicked", Duration = 3})
 end
 cmdCommands["unantiafk"] = function()
     if antiAfkConnection then
@@ -12481,7 +12957,6 @@ cmdCommands["unantiafk"] = function()
     end
     antiAfkActive = false
     syncToggle("Anti AFK", false)
-    game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Anti-AFK", Text = "Disabled", Duration = 2})
 end
 Act.antiAfkOn = cmdCommands["antiafk"]
 Act.antiAfkOff = cmdCommands["unantiafk"]
@@ -13881,14 +14356,7 @@ cmdInput.FocusLost:Connect(function(enterPressed)
                 if toggleRegistry["3D Trail"] then toggleRegistry["3D Trail"].set(false) end
             end
         elseif cmd == "age" and arg ~= "" then
-            local target = findPlayer(arg)
-            if target then
-                game:GetService("StarterGui"):SetCore("SendNotification", {
-                    Title = "Account Age",
-                    Text = tostring(target.AccountAge) .. " days",
-                    Duration = 5
-                })
-            end
+            findPlayer(arg)
         elseif cmd == "time" and arg ~= "" then
             local t = tonumber(arg)
             if t and t >= 0 and t <= 24 then
@@ -13909,13 +14377,6 @@ cmdInput.FocusLost:Connect(function(enterPressed)
                 if fovCircle then
                     pcall(function() fovCircle.Radius = fovRadius end)
                 end
-                pcall(function()
-                    game:GetService("StarterGui"):SetCore("SendNotification", {
-                        Title = "Aim Radius",
-                        Text = "Set to " .. tostring(fovRadius),
-                        Duration = 2,
-                    })
-                end)
             else
                 if toggleRegistry["Aim Radius"] then
                     toggleRegistry["Aim Radius"].set(not fovCircleEnabled)
@@ -14088,10 +14549,7 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
 end))
 
 task.spawn(function()
-    local ok, err = pcall(playTwilightLoader)
-    if not ok then
-        warn("[Twilight] loader error:", err)
-    end
+    pcall(playTwilightLoader)
     if MainFrame and MainFrame.Parent and not MainFrame.Visible then
         MainFrame.Visible = true
     end
