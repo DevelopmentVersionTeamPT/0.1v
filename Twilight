@@ -460,6 +460,70 @@ Act.disableActive = false
 Act.disableSnapshot = {}
 Act.runDisable = nil
 
+-- Low-end PC helpers: throttle heavy loops + cache expensive scans
+local Perf = {
+    lowMode = true,
+    fps = 60,
+    _fpsFrames = 0,
+    _fpsT0 = tick(),
+    _last = {},
+    _espWasOn = false,
+    _npcWasOn = false,
+    npcCache = {},
+    npcCacheAt = 0,
+    noclipParts = {},
+    noclipChar = nil,
+    noclipAt = 0,
+}
+
+function Perf.interval(name)
+    if not Perf.lowMode then
+        if name == "npcScan" then return 0.75 end
+        if name == "noclipRefresh" then return 1.0 end
+        return 0
+    end
+    if name == "esp" then return 1 / 20 end
+    if name == "npcEsp" then return 1 / 15 end
+    if name == "npcScan" then return 1.5 end
+    if name == "playerVisuals" then return 1 / 15 end
+    if name == "targetInfo" then return 1 / 10 end
+    if name == "noclipRefresh" then return 1.25 end
+    return 1 / 30
+end
+
+function Perf.allow(name)
+    local iv = Perf.interval(name)
+    if iv <= 0 then return true end
+    local now = tick()
+    local last = Perf._last[name]
+    if last and (now - last) < iv then return false end
+    Perf._last[name] = now
+    return true
+end
+
+function Perf.anyPlayerVisuals()
+    return espEnabled or espHealthEnabled or espHealthBarEnabled
+        or highlightEnabled or chamsEnabled or tracersEnabled
+        or trailEnabled or rainbowTrailEnabled or boxEspEnabled
+        or boxEsp3DEnabled or skeletonEnabled or headDotEnabled
+        or cornerBoxEnabled or distanceEspEnabled or weaponEspEnabled
+        or teamEspEnabled or friendEspEnabled or beamEspEnabled
+end
+
+table.insert(connections, RunService.Heartbeat:Connect(function()
+    Perf._fpsFrames = Perf._fpsFrames + 1
+    local now = tick()
+    if now - Perf._fpsT0 >= 1 then
+        Perf.fps = Perf._fpsFrames
+        Perf._fpsFrames = 0
+        Perf._fpsT0 = now
+        -- Auto tighten if FPS tanks (does not turn lowMode off)
+        if Perf.fps > 0 and Perf.fps < 28 then
+            Perf.lowMode = true
+        end
+    end
+end))
+
 Act.clearAllVisualEsp = function()
     espEnabled = false
     espHealthEnabled = false
@@ -3746,6 +3810,1085 @@ tabs["Waypoints"] = createTabContent()
     Act.refreshWaypoints()
 end)()
 
+createTabButton("Emote")
+tabs["Emote"] = createTabContent()
+
+;(function()
+    local emoteTab = tabs["Emote"]
+    local HttpService = game:GetService("HttpService")
+    Act.catalogEmote = Act.catalogEmote or {
+        selected = "Wave",
+        loop = true,
+        track = nil,
+    }
+    Act.catalogEmote.loop = true
+
+    local listScroll
+    local listLayout
+    local catalogItems = {}
+    local rowPool = {}
+    local seenIds = {}
+    local nextPageCursor = nil
+    local hasMorePages = true
+    local loadingPages = false
+    local pageEmptyStreak = 0
+
+    local EMOTE_TYPE_ID = 61
+    local verifiedCache = {} -- [id] = true/false
+
+    -- Large custom-emote pool (non-Roblox). Refresh rotates a NEW batch from this.
+    local EMOTE_POOL = {
+        {name = "Floating Aura", id = 79795305221612, creator = "HD Admin"},
+        {name = "Helicopter", id = 110553756436163, creator = "HD Admin"},
+        {name = "Rat Dance", id = 83606297144428, creator = "HD Admin"},
+        {name = "Plane", id = 134913783169182, creator = "HD Admin"},
+        {name = "Tank", id = 85076031433488, creator = "HD Admin"},
+        {name = "Car", id = 115407270129592, creator = "HD Admin"},
+        {name = "/e sit", id = 129668542320076, creator = "HD Admin"},
+        {name = "Fake MM2 Death", id = 107498554725527, creator = "HD Admin"},
+        {name = "Box", id = 73500261613116, creator = "HD Admin"},
+        {name = "Dog", id = 84198855496510, creator = "HD Admin"},
+        {name = "Worm", id = 108956933782219, creator = "HD Admin"},
+        {name = "Hide", id = 84868707350198, creator = "HD Admin"},
+        {name = "Take The L", id = 75633408126191, creator = "HD Admin"},
+        {name = "Fry Dance", id = 124799741487022, creator = "HD Admin"},
+        {name = "Phase", id = 79653736088166, creator = "HD Admin"},
+        {name = "TWICE The Feels", id = 12874468267, creator = "Republic Records on Roblox"},
+        {name = "TWICE Feel Special", id = 14900153406, creator = "Republic Records on Roblox"},
+        {name = "Baby Queen - Bouncy Twirl", id = 14353423348, creator = "Universal Music UK"},
+        {name = "Baby Queen - Face Frame", id = 14353421343, creator = "Universal Music UK"},
+        {name = "Baby Queen - Strut", id = 14353425085, creator = "Universal Music UK"},
+        {name = "Yungblud Happier Jump", id = 15610015346, creator = "YUNGBLUD Army"},
+        {name = "Mae Stephens - Piano Hands", id = 16553249658, creator = "Universal Music UK"},
+        {name = "Olivia Rodrigo Head Bop", id = 15554010118, creator = "Livies HQ"},
+        {name = "Sturdy Dance - Ice Spice", id = 17746270218, creator = "Ice Spice Munchland"},
+        {name = "Frosty Flair - Tommy Hilfiger", id = 10214406616, creator = "Tommy Hilfiger"},
+        {name = "V Pose - Tommy Hilfiger", id = 10214418283, creator = "Tommy Hilfiger"},
+        {name = "Alo Yoga Pose - Lotus Position", id = 12507097350, creator = "Alo Yoga"},
+        {name = "Jamal dance", id = 124846951256849, creator = "The Blocks Groups Marketplace"},
+        {name = "Jamal Brazil Groove Dance", id = 102068081381181, creator = "Emotes LTD"},
+        {name = "Jamal Brazil Groove Six Seven Trend Dance", id = 95845928824549, creator = "Emote Heaven"},
+        {name = "Baddie Shake Shake Shake Dance", id = 129594937997401, creator = "Emote Heaven"},
+        {name = "Rat Dance (BEST)", id = 135116358532087, creator = "Emote Heaven"},
+        {name = "China Aura Dance", id = 115428631276525, creator = "Emote Heaven"},
+        {name = "Zesty Study Gangster Dance", id = 135546574918527, creator = "Emote Heaven"},
+        {name = "Low Cortisol Dance", id = 71517831094574, creator = "Emote Heaven"},
+        {name = "The Hype Dance", id = 113706374899354, creator = "Emote Heaven"},
+        {name = "Wobbly Zesty Sturdy Dance", id = 77880729614024, creator = "Emote Heaven"},
+        {name = "Zesty Sturdy Dance", id = 84248182445472, creator = "Emotes LTD"},
+        {name = "Rage (Travis Scott Dance)", id = 88039852624605, creator = "LongLiveAstr0"},
+        {name = "The Rick Dance", id = 96163949804727, creator = "LongLiveAstr0"},
+        {name = "KATSEYE - Touch", id = 139021427684680, creator = "EYEKONS world"},
+        {name = "Funny Parrot Dance", id = 113852525194571, creator = "Lucky Emotes!"},
+        {name = "L Dance", id = 73039500693145, creator = "Lucky UGC Creations"},
+        {name = "Ragdoll Push", id = 91452077708399, creator = "Lucky UGC Creations"},
+        {name = "Cutesey Dance", id = 96559691182568, creator = "Avrenzi"},
+        {name = "Dancing Like a Classic Zombie", id = 71905341620227, creator = "The Enzo Clothings Originals"},
+        {name = "Kid Club Dancing", id = 74968050780162, creator = "Tristi's UGC Hub"},
+        {name = "Patrick Big Guy Dance", id = 125195309818879, creator = "Forever Set"},
+        {name = "Just Know Dance", id = 92676800418557, creator = "Chubbz :3"},
+        {name = "I got the feeling dance V2", id = 98488342645730, creator = "Chubbz :3"},
+        {name = "Tunnel Vision Dance - Melanie Martinez", id = 91384946379246, creator = "Timeless Elegance Store"},
+        {name = "Kitty Paw Dance", id = 84118047701599, creator = "Frenky's Emotes"},
+        {name = "Pon Pon Dance", id = 93017756144935, creator = "ilikefluffyunicorns"},
+        {name = "Godly Aura fly pose idle", id = 76361248833307, creator = "UGCics"},
+        {name = "PSYCHO TEDDY DANCE", id = 111884482804705, creator = "#gimmeswag"},
+        {name = "Roy Purdy Dance", id = 92960627078693, creator = "GenoseEmotes"},
+        {name = "Effortless Aura Pose", id = 101573394483995, creator = "VeD_DeV"},
+        {name = "Cute Girly Pop Shake Hip Sway Dance", id = 95386286646909, creator = "pawtaztic"},
+        {name = "Convencete Cutesy Girly Dance Trend", id = 75956230643865, creator = "uomi"},
+        {name = "Scuba Ttk Dance", id = 116038754021133, creator = "Wrld Store"},
+        {name = "Nervy Dance Viral", id = 130014783641205, creator = "Humble UGCs"},
+        {name = "Cute Kawaii Chibi Dance Cheer Anime PfP", id = 97376767323518, creator = "Girl Llke Me"},
+    }
+    local poolById = {}
+    local lastBatchIds = {}
+    for _, it in ipairs(EMOTE_POOL) do
+        poolById[it.id] = true
+    end
+
+    local function addToEmotePool(item)
+        if not item or not item.id or poolById[item.id] then return end
+        poolById[item.id] = true
+        EMOTE_POOL[#EMOTE_POOL + 1] = {
+            name = tostring(item.name or ("Emote " .. tostring(item.id))),
+            id = item.id,
+            creator = tostring(item.creator or ""),
+        }
+    end
+
+    local function verifyIsEmoteId(id)
+        id = tonumber(id)
+        if not id then return false end
+        if verifiedCache[id] ~= nil then return verifiedCache[id] end
+        -- Don't block list rendering on Marketplace failures
+        verifiedCache[id] = true
+        return true
+    end
+
+    local function setStatus(_text)
+        -- status line removed from Emote tab
+    end
+
+    local function getHumanoid()
+        local char = LocalPlayer.Character
+        return char and char:FindFirstChildOfClass("Humanoid")
+    end
+
+    local function getAnimator(hum)
+        if not hum then return nil end
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if not animator then
+            animator = Instance.new("Animator")
+            animator.Parent = hum
+        end
+        return animator
+    end
+
+    -- Catalog emote IDs must be resolved to nested Animation IDs before LoadAnimation.
+    local animResolveCache = {} -- [emoteId] = animationId (only successful resolves)
+    local lastPlayClick = 0
+    local playToken = 0
+
+    local function stopEmote()
+        playToken = playToken + 1
+        local track = Act.catalogEmote.track
+        Act.catalogEmote.track = nil
+        if track then
+            pcall(function() track:Stop(0.1) end)
+        end
+        setStatus("Stopped")
+    end
+
+    local function extractAnimIdFromInstance(root)
+        if not root then return nil end
+        if root:IsA("Animation") then
+            return tostring(root.AnimationId):match("%d+")
+        end
+        local prefer = root:FindFirstChild("R15Anim")
+            or root:FindFirstChild("R15")
+            or root:FindFirstChild("play")
+            or root
+        local best = nil
+        local ok, desc = pcall(function() return prefer:GetDescendants() end)
+        if ok and typeof(desc) == "table" then
+            for i = 1, math.min(#desc, 120) do
+                local d = desc[i]
+                if d and d:IsA("Animation") then
+                    local num = tostring(d.AnimationId):match("%d+")
+                    if num then
+                        local n = string.lower(d.Name)
+                        if n == "play" or n == "animation" or n == "emote" then
+                            return num
+                        end
+                        best = best or num
+                    end
+                end
+            end
+        end
+        if best then return best end
+        if prefer ~= root then
+            ok, desc = pcall(function() return root:GetDescendants() end)
+            if ok and typeof(desc) == "table" then
+                for i = 1, math.min(#desc, 120) do
+                    local d = desc[i]
+                    if d and d:IsA("Animation") then
+                        local num = tostring(d.AnimationId):match("%d+")
+                        if num then return num end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function resolveEmoteAnimationId(assetId)
+        assetId = tostring(assetId or ""):match("%d+")
+        if not assetId then return nil end
+        if animResolveCache[assetId] then
+            return animResolveCache[assetId]
+        end
+
+        -- 1) GetObjects
+        local ok, objs = pcall(function()
+            return game:GetObjects("rbxassetid://" .. assetId)
+        end)
+        if ok and typeof(objs) == "table" and objs[1] then
+            local resolved = extractAnimIdFromInstance(objs[1])
+            pcall(function() objs[1]:Destroy() end)
+            if resolved then
+                animResolveCache[assetId] = resolved
+                return resolved
+            end
+        end
+
+        -- 2) InsertService fallback
+        ok, objs = pcall(function()
+            return game:GetService("InsertService"):LoadAsset(tonumber(assetId))
+        end)
+        if ok and objs then
+            local resolved = extractAnimIdFromInstance(objs)
+            pcall(function() objs:Destroy() end)
+            if resolved then
+                animResolveCache[assetId] = resolved
+                return resolved
+            end
+        end
+
+        -- Do NOT cache failures (catalog id ≠ animation id)
+        return nil
+    end
+
+    local function playAnimationId(animId, label)
+        animId = tostring(animId or ""):match("%d+")
+        if not animId then return false end
+        local hum = getHumanoid()
+        if not hum then
+            setStatus("No character")
+            return false
+        end
+        local animator = getAnimator(hum)
+        if not animator then
+            setStatus("No Animator")
+            return false
+        end
+
+        local prev = Act.catalogEmote.track
+        Act.catalogEmote.track = nil
+        if prev then
+            pcall(function() prev:Stop(0.1) end)
+        end
+
+        local trackOk, track = pcall(function()
+            local anim = Instance.new("Animation")
+            anim.Name = "TwilightEmote_" .. animId
+            anim.AnimationId = "rbxassetid://" .. animId
+            local t = animator:LoadAnimation(anim)
+            t.Looped = true
+            t.Priority = Enum.AnimationPriority.Action4
+            t:Play(0.15, 1, 1)
+            return t
+        end)
+        if not trackOk or not track then
+            setStatus("Load failed")
+            return false
+        end
+        Act.catalogEmote.track = track
+        Act.catalogEmote.selected = tostring(label or animId)
+        setStatus("Playing " .. tostring(label or animId))
+        return true
+    end
+
+    local function playEmoteById(id)
+        id = tostring(id or ""):gsub("rbxassetid://", ""):match("%d+")
+        if not id then
+            setStatus("Invalid emote / animation ID")
+            return false
+        end
+        local now = tick()
+        if now - lastPlayClick < 0.12 then return false end
+        lastPlayClick = now
+
+        playToken = playToken + 1
+        local token = playToken
+
+        -- Cached resolve = instant replay
+        local cached = animResolveCache[id]
+        if cached then
+            return playAnimationId(cached, id)
+        end
+
+        setStatus("Loading emote…")
+        task.spawn(function()
+            if token ~= playToken then return end
+
+            -- Try Humanoid PlayEmote first (works for some catalog emotes)
+            local hum = getHumanoid()
+            if hum then
+                local ename = "Twilight_" .. id
+                local ok, played = pcall(function()
+                    local desc = hum:GetAppliedDescription()
+                    if desc then
+                        pcall(function() desc:AddEmote(ename, tonumber(id)) end)
+                    end
+                    return hum:PlayEmote(ename)
+                end)
+                if token ~= playToken then return end
+                if ok and played then
+                    Act.catalogEmote.selected = ename
+                    setStatus("Playing emote id " .. id)
+                    return
+                end
+            end
+
+            -- Resolve catalog emote → nested Animation id, then play
+            local animId = resolveEmoteAnimationId(id)
+            if token ~= playToken then return end
+            if not animId then
+                -- Last resort: try the raw id as an Animation asset
+                if playAnimationId(id, id) then
+                    return
+                end
+                setStatus("Could not resolve emote " .. id)
+                return
+            end
+            playAnimationId(animId, id)
+        end)
+        return true
+    end
+
+    local function playEmoteByName(name)
+        name = tostring(name or Act.catalogEmote.selected or "")
+        if name == "" then
+            setStatus("No emote selected")
+            return false
+        end
+        for _, row in ipairs(catalogItems) do
+            if row.name == name and row.id then
+                return playEmoteById(tostring(row.id))
+            end
+        end
+        local hum = getHumanoid()
+        if not hum then
+            setStatus("No character")
+            return false
+        end
+        stopEmote()
+        Act.catalogEmote.selected = name
+        local ok, played = pcall(function()
+            return hum:PlayEmote(name)
+        end)
+        if ok and played then
+            setStatus("Playing emote: " .. name)
+            return true
+        end
+        setStatus("Failed: " .. name)
+        return false
+    end
+
+    Act.playCatalogEmote = playEmoteByName
+    Act.playCatalogEmoteId = playEmoteById
+    Act.stopCatalogEmote = stopEmote
+
+    local function copyId(id)
+        id = tostring(id or "")
+        if setclipboard then
+            pcall(setclipboard, id)
+        elseif toclipboard then
+            pcall(toclipboard, id)
+        end
+    end
+
+    local function thumbUrl(id)
+        return "rbxthumb://type=Asset&id=" .. tostring(id) .. "&w=150&h=150"
+    end
+
+    local function clearRows()
+        for _, row in ipairs(rowPool) do
+            pcall(function() row:Destroy() end)
+        end
+        rowPool = {}
+    end
+
+    local function makeEmoteRow(item, order)
+        local row = Instance.new("Frame")
+        row.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+        row.BorderSizePixel = 0
+        row.Size = UDim2.new(1, 0, 0, 52)
+        row.LayoutOrder = order
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+        table.insert(themedElements, {type = "container", obj = row})
+
+        local accent = Instance.new("Frame", row)
+        accent.BackgroundColor3 = Color3.fromRGB(70, 74, 84)
+        accent.BorderSizePixel = 0
+        accent.Size = UDim2.new(0, 3, 1, -12)
+        accent.Position = UDim2.new(0, 0, 0, 6)
+        Instance.new("UICorner", accent).CornerRadius = UDim.new(1, 0)
+
+        local thumb = Instance.new("ImageLabel", row)
+        thumb.BackgroundColor3 = Color3.fromRGB(28, 28, 32)
+        thumb.BorderSizePixel = 0
+        thumb.Position = UDim2.new(0, 12, 0.5, -18)
+        thumb.Size = UDim2.new(0, 36, 0, 36)
+        thumb.Image = item.id and thumbUrl(item.id) or ""
+        thumb.ScaleType = Enum.ScaleType.Crop
+        Instance.new("UICorner", thumb).CornerRadius = UDim.new(0, 6)
+
+        local nameLbl = Instance.new("TextLabel", row)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Position = UDim2.new(0, 56, 0, 6)
+        nameLbl.Size = UDim2.new(1, -150, 0, 18)
+        nameLbl.Font = Enum.Font.BuilderSansMedium
+        nameLbl.Text = item.name or "Emote"
+        nameLbl.TextColor3 = Color3.fromRGB(235, 235, 240)
+        nameLbl.TextSize = 12
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+        local idLbl = Instance.new("TextLabel", row)
+        idLbl.BackgroundTransparency = 1
+        idLbl.Position = UDim2.new(0, 56, 0, 26)
+        idLbl.Size = UDim2.new(1, -150, 0, 16)
+        idLbl.Font = Enum.Font.BuilderSans
+        idLbl.Text = item.id and ("ID " .. tostring(item.id)) or ""
+        if item.creator and item.creator ~= "" then
+            idLbl.Text = tostring(item.creator) .. " · ID " .. tostring(item.id)
+        end
+        idLbl.TextColor3 = Color3.fromRGB(120, 122, 130)
+        idLbl.TextSize = 10
+        idLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        local play = Instance.new("TextButton", row)
+        play.BackgroundColor3 = Color3.fromRGB(40, 88, 48)
+        play.BorderSizePixel = 0
+        play.Position = UDim2.new(1, -90, 0.5, -11)
+        play.Size = UDim2.new(0, 40, 0, 22)
+        play.Font = Enum.Font.BuilderSansBold
+        play.Text = "Play"
+        play.TextColor3 = Color3.fromRGB(236, 236, 240)
+        play.TextSize = 10
+        play.AutoButtonColor = false
+        Instance.new("UICorner", play).CornerRadius = UDim.new(0, 5)
+        play.MouseButton1Click:Connect(function()
+            if item.id then
+                playEmoteById(tostring(item.id))
+            else
+                playEmoteByName(item.name)
+            end
+        end)
+
+        local copy = Instance.new("TextButton", row)
+        copy.BackgroundColor3 = Color3.fromRGB(42, 42, 46)
+        copy.BorderSizePixel = 0
+        copy.Position = UDim2.new(1, -44, 0.5, -11)
+        copy.Size = UDim2.new(0, 34, 0, 22)
+        copy.Font = Enum.Font.BuilderSansBold
+        copy.Text = "ID"
+        copy.TextColor3 = Color3.fromRGB(220, 220, 226)
+        copy.TextSize = 10
+        copy.AutoButtonColor = false
+        copy.Visible = item.id ~= nil
+        Instance.new("UICorner", copy).CornerRadius = UDim.new(0, 5)
+        copy.MouseButton1Click:Connect(function()
+            if item.id then copyId(item.id) end
+        end)
+
+        if listScroll then
+            row.Parent = listScroll
+        end
+        rowPool[#rowPool + 1] = row
+        return row
+    end
+
+    local function appendEmoteItem(item)
+        if not item or not item.id then return false end
+        -- Keep id as string key-safe for large asset ids
+        local idNum = tonumber(item.id)
+        local idKey = tostring(item.id):match("%d+") or tostring(item.id)
+        if not idNum or seenIds[idKey] then return false end
+        if not verifyIsEmoteId(idNum) then return false end
+        seenIds[idKey] = true
+        item.id = idNum
+        catalogItems[#catalogItems + 1] = item
+        if listScroll then
+            makeEmoteRow(item, #catalogItems)
+        end
+        return true
+    end
+
+    -- EmoteAnimation only; skip official Roblox presets (creator 1)
+    local function isCustomCatalogEmote(entry)
+        if not entry then return false end
+        local typeId = entry.assetType or entry.assetTypeId or entry.AssetTypeId or entry.assetTypeID or entry.AssetType
+        if typeof(typeId) == "EnumItem" then typeId = typeId.Value end
+        if typeof(typeId) == "string" then typeId = tonumber(typeId) or typeId end
+
+        local isEmote = false
+        if typeof(typeId) == "number" then
+            isEmote = (typeId == EMOTE_TYPE_ID)
+        elseif typeof(typeId) == "string" then
+            local lower = string.lower(typeId)
+            isEmote = (lower == "emoteanimation" or lower == "emote" or lower == "61")
+        end
+        if not isEmote and typeof(entry.taxonomy) == "table" then
+            for _, t in ipairs(entry.taxonomy) do
+                if typeof(t) == "table" and tostring(t.taxonomyName or ""):lower() == "emotes" then
+                    isEmote = true
+                    break
+                end
+            end
+        end
+        if not isEmote then return false end
+
+        local creatorId = tonumber(entry.creatorTargetId or entry.CreatorTargetId or entry.creatorId or 0)
+        local creatorName = string.lower(tostring(entry.creatorName or entry.CreatorName or entry.creator or ""))
+        if creatorId == 1 or creatorName == "roblox" then
+            return false
+        end
+        return true
+    end
+
+    local function encodeCursor(cursor)
+        if not cursor or cursor == "" then return "" end
+        local ok, enc = pcall(function()
+            return HttpService:UrlEncode(tostring(cursor))
+        end)
+        if ok and enc then return enc end
+        return tostring(cursor):gsub("([^%w%-_%.~])", function(c)
+            return string.format("%%%02X", string.byte(c))
+        end)
+    end
+
+    local function httpGet(url)
+        local req = (typeof(request) == "function" and request)
+            or (typeof(http_request) == "function" and http_request)
+            or (syn and syn.request)
+        if req then
+            local rok, res = pcall(function()
+                return req({
+                    Url = url,
+                    Method = "GET",
+                    Headers = {["Accept"] = "application/json"},
+                })
+            end)
+            if rok and res then
+                local body = res.Body or res.body
+                local code = res.StatusCode or res.Status or res.statusCode
+                if typeof(body) == "string" and #body > 10 and (code == nil or code == 200) then
+                    return body
+                end
+            end
+        end
+        local ok, raw = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if ok and typeof(raw) == "string" and #raw > 10 and raw:sub(1, 1) == "{" then
+            return raw
+        end
+        return nil
+    end
+
+    local function parseCatalogPayload(raw)
+        local fetched, gotCursor = {}, nil
+        if typeof(raw) ~= "string" then return fetched, gotCursor, false end
+        local decOk, data = pcall(function()
+            return HttpService:JSONDecode(raw)
+        end)
+        if not decOk or typeof(data) ~= "table" or typeof(data.data) ~= "table" then
+            return fetched, gotCursor, false
+        end
+        for _, entry in ipairs(data.data) do
+            if isCustomCatalogEmote(entry) then
+                local id = tonumber(entry.id or entry.assetId or entry.itemId or entry.Id)
+                local name = entry.name or entry.itemName or entry.Name
+                if id and name then
+                    verifiedCache[id] = true
+                    fetched[#fetched + 1] = {
+                        name = tostring(name),
+                        id = id,
+                        creator = tostring(entry.creatorName or entry.CreatorName or ""),
+                    }
+                end
+            end
+        end
+        gotCursor = data.nextPageCursor or data.nextPageToken or data.nextCursor
+        if gotCursor == "" then gotCursor = nil end
+        return fetched, gotCursor, true
+    end
+
+    local function fetchViaAvatarEditor()
+        local fetched = {}
+        local ok, pages = pcall(function()
+            local AES = game:GetService("AvatarEditorService")
+            local params = CatalogSearchParams.new()
+            pcall(function()
+                params.AssetTypes = {Enum.AvatarAssetType.EmoteAnimation}
+            end)
+            pcall(function()
+                params.IncludeOffSale = true
+            end)
+            pcall(function()
+                local sorts = {
+                    Enum.CatalogSortType.Relevance,
+                    Enum.CatalogSortType.Favorited,
+                    Enum.CatalogSortType.Sales,
+                    Enum.CatalogSortType.Updated,
+                }
+                params.SortType = sorts[math.random(1, #sorts)]
+            end)
+            pcall(function()
+                if catalogKeyword and catalogKeyword ~= "" then
+                    params.SearchKeyword = catalogKeyword
+                end
+            end)
+            pcall(function()
+                params.Limit = 30
+            end)
+            return AES:SearchCatalog(params)
+        end)
+        if not ok or not pages then return fetched, false end
+        local pageOk, items = pcall(function()
+            return pages:GetCurrentPage()
+        end)
+        if not pageOk or typeof(items) ~= "table" then return fetched, false end
+        for _, entry in ipairs(items) do
+            -- Normalize AES fields
+            local norm = {
+                id = entry.Id or entry.id,
+                name = entry.Name or entry.name,
+                assetType = EMOTE_TYPE_ID,
+                creatorTargetId = entry.CreatorTargetId or (entry.Creator and entry.Creator.Id),
+                creatorName = entry.CreatorName or (entry.Creator and entry.Creator.Name) or "",
+                itemType = entry.ItemType or "Asset",
+            }
+            if isCustomCatalogEmote(norm) then
+                local id = tonumber(norm.id)
+                if id and norm.name then
+                    verifiedCache[id] = true
+                    fetched[#fetched + 1] = {
+                        name = tostring(norm.name),
+                        id = id,
+                        creator = tostring(norm.creatorName or ""),
+                    }
+                end
+            end
+        end
+        local hasNext = false
+        pcall(function() hasNext = not pages.IsFinished end)
+        return fetched, #fetched > 0 or hasNext, pages
+    end
+
+    local aesPages = nil
+    local fetchGeneration = 0
+    local fetchCatalogPage
+    local refreshBtn
+    local catalogSortType = 1
+    local catalogKeyword = ""
+    local pagesToSkip = 0 -- on refresh, jump ahead so list isn't identical
+
+    local CATALOG_KEYWORDS = {
+        "", "dance", "aura", "sit", "funny", "wave", "viral", "meme",
+        "rizz", "sigma", "floss", "happy", "sad", "car", "box", "admin",
+        "emote", "jump", "spin", "walk", "lay", "cry", "laugh", "flex",
+    }
+
+    local function shuffleList(t)
+        for i = #t, 2, -1 do
+            local j = math.random(1, i)
+            t[i], t[j] = t[j], t[i]
+        end
+        return t
+    end
+
+    local function pickFreshCatalogQuery()
+        -- Rotate sort so Refresh doesn't always hit the same top page
+        local sorts = {0, 1, 2, 3} -- Relevance, Favorited, Sales, Updated
+        catalogSortType = sorts[math.random(1, #sorts)]
+        catalogKeyword = CATALOG_KEYWORDS[math.random(1, #CATALOG_KEYWORDS)]
+        pagesToSkip = math.random(1, 8)
+    end
+
+    local function buildCatalogUrls(cursor)
+        local cur = ""
+        if cursor and cursor ~= "" then
+            cur = "&cursor=" .. encodeCursor(cursor)
+        end
+        local kw = ""
+        if catalogKeyword and catalogKeyword ~= "" then
+            kw = "&keyword=" .. encodeCursor(catalogKeyword)
+        end
+        local st = tostring(catalogSortType)
+        return {
+            "https://catalog.roblox.com/v2/search/items/details?assetTypeIds=61&limit=30&sortType=" .. st .. kw .. cur,
+            "https://catalog.roblox.com/v2/search/items/details?AssetTypeIds=61&limit=30&SortType=" .. st .. kw .. cur,
+            "https://catalog.roblox.com/v1/search/items/details?Category=14&Subcategory=39&Limit=30&SortType=" .. st
+                .. ((catalogKeyword ~= "" and ("&Keyword=" .. encodeCursor(catalogKeyword)) or ""))
+                .. ((cursor and cursor ~= "") and ("&Cursor=" .. encodeCursor(cursor)) or ""),
+        }
+    end
+
+    local function httpFetchPage(cursor)
+        local fetched, gotCursor, pageOk = {}, nil, false
+        for _, url in ipairs(buildCatalogUrls(cursor)) do
+            local raw = httpGet(url)
+            local list, c, ok = parseCatalogPayload(raw)
+            if ok then
+                return list, c, true
+            end
+        end
+        return fetched, gotCursor, pageOk
+    end
+
+    local function shouldPrefetchMore()
+        if not listScroll or not listLayout or not hasMorePages then return false end
+        local window = listScroll.AbsoluteSize.Y
+        if window <= 0 then window = listScroll.AbsoluteWindowSize.Y end
+        local content = listLayout.AbsoluteContentSize.Y
+        local pos = listScroll.CanvasPosition.Y
+        if content <= 0 then
+            return #catalogItems < (Perf.lowMode and 24 or 45)
+        end
+        if content < (window + 80) then return true end
+        return (content - (pos + window)) <= (Perf.lowMode and 140 or 200)
+    end
+
+    -- Pick a batch that avoids the previous refresh's IDs (so Refresh feels new)
+    local function showRotatedPoolBatch(batchSize)
+        batchSize = batchSize or 18
+        local fresh = {}
+        local reuse = {}
+        for _, it in ipairs(EMOTE_POOL) do
+            if lastBatchIds[it.id] then
+                reuse[#reuse + 1] = it
+            else
+                fresh[#fresh + 1] = it
+            end
+        end
+        -- If we've cycled most of the pool, allow reuse
+        if #fresh < math.max(6, math.floor(batchSize / 2)) then
+            lastBatchIds = {}
+            fresh = {}
+            for _, it in ipairs(EMOTE_POOL) do
+                fresh[#fresh + 1] = it
+            end
+            reuse = {}
+        end
+        shuffleList(fresh)
+        shuffleList(reuse)
+        clearRows()
+        seenIds = {}
+        catalogItems = {}
+        local newBatch = {}
+        local n = 0
+        local function take(list)
+            for _, it in ipairs(list) do
+                if n >= batchSize then return end
+                verifiedCache[it.id] = true
+                if appendEmoteItem({
+                    name = it.name,
+                    id = it.id,
+                    creator = it.creator,
+                }) then
+                    newBatch[it.id] = true
+                    n = n + 1
+                end
+            end
+        end
+        take(fresh)
+        take(reuse)
+        lastBatchIds = newBatch
+        return n
+    end
+
+    local function setRefreshLabel(text)
+        if refreshBtn then
+            refreshBtn.Text = text
+        end
+    end
+
+    fetchCatalogPage = function(reset)
+        if reset then
+            -- Hard cancel any in-flight page load so Refresh always works
+            fetchGeneration = fetchGeneration + 1
+            loadingPages = false
+        elseif loadingPages or not hasMorePages then
+            return
+        end
+
+        local gen = fetchGeneration
+        loadingPages = true
+        if reset then
+            setRefreshLabel("Refreshing…")
+            pickFreshCatalogQuery()
+            nextPageCursor = nil
+            hasMorePages = true
+            pageEmptyStreak = 0
+            aesPages = nil
+            if listScroll then
+                listScroll.CanvasPosition = Vector2.new(0, 0)
+            end
+
+            -- ALWAYS show a different local batch first (guaranteed visible change)
+            showRotatedPoolBatch(18)
+
+            -- Skip ahead N pages for live catalog variety
+            local skipsLeft = pagesToSkip
+            local cursor = nil
+            while skipsLeft > 0 and gen == fetchGeneration do
+                local list, c, ok = httpFetchPage(cursor)
+                if not ok then break end
+                if typeof(list) == "table" then
+                    for _, it in ipairs(list) do
+                        addToEmotePool(it)
+                    end
+                end
+                cursor = c
+                if typeof(cursor) ~= "string" or cursor == "" then break end
+                skipsLeft = skipsLeft - 1
+            end
+            nextPageCursor = cursor
+            pagesToSkip = 0
+        end
+
+        local fetched = {}
+        local gotCursor = nil
+        local pageOk = false
+
+        -- 1) Catalog HTTP — append NEW emotes (skip ones already in this batch)
+        if not aesPages then
+            fetched, gotCursor, pageOk = httpFetchPage(nextPageCursor)
+            if pageOk and #fetched > 1 then
+                shuffleList(fetched)
+            end
+        end
+
+        if gen ~= fetchGeneration then
+            loadingPages = false
+            return
+        end
+
+        -- 2) AvatarEditorService if HTTP failed (even if we will add fallback later)
+        if not pageOk and not aesPages then
+            local list, ok, pages = fetchViaAvatarEditor()
+            if gen ~= fetchGeneration then
+                loadingPages = false
+                return
+            end
+            if ok then
+                fetched = list
+                pageOk = true
+                aesPages = pages
+                gotCursor = nil
+                local finished = true
+                pcall(function() finished = pages.IsFinished end)
+                hasMorePages = not finished
+            end
+        elseif aesPages and not reset then
+            local advOk = pcall(function()
+                if not aesPages.IsFinished then
+                    aesPages:AdvanceToNextPageAsync()
+                end
+            end)
+            if advOk then
+                local list = {}
+                local pageOk2, items = pcall(function() return aesPages:GetCurrentPage() end)
+                if pageOk2 and typeof(items) == "table" then
+                    for _, entry in ipairs(items) do
+                        local norm = {
+                            id = entry.Id or entry.id,
+                            name = entry.Name or entry.name,
+                            assetType = EMOTE_TYPE_ID,
+                            creatorTargetId = entry.CreatorTargetId or (entry.Creator and entry.Creator.Id),
+                            creatorName = entry.CreatorName or (entry.Creator and entry.Creator.Name) or "",
+                            itemType = "Asset",
+                        }
+                        if isCustomCatalogEmote(norm) then
+                            local id = tonumber(norm.id)
+                            if id and norm.name then
+                                verifiedCache[id] = true
+                                list[#list + 1] = {name = tostring(norm.name), id = id, creator = tostring(norm.creatorName or "")}
+                            end
+                        end
+                    end
+                    fetched = list
+                    pageOk = true
+                    local finished = true
+                    pcall(function() finished = aesPages.IsFinished end)
+                    hasMorePages = not finished
+                end
+            else
+                hasMorePages = false
+            end
+        end
+
+        if gen ~= fetchGeneration then
+            loadingPages = false
+            return
+        end
+
+        local added = 0
+        if pageOk then
+            for _, it in ipairs(fetched) do
+                addToEmotePool(it)
+                -- Prefer showing emotes that weren't in the previous refresh batch
+                if not lastBatchIds[it.id] or reset == false then
+                    if appendEmoteItem(it) then
+                        added = added + 1
+                        lastBatchIds[it.id] = true
+                    end
+                end
+            end
+            -- If filter skipped everything, still append something new from fetch
+            if added == 0 then
+                for _, it in ipairs(fetched) do
+                    if appendEmoteItem(it) then
+                        added = added + 1
+                        lastBatchIds[it.id] = true
+                    end
+                end
+            end
+            if not aesPages then
+                if typeof(gotCursor) == "string" and gotCursor ~= "" then
+                    nextPageCursor = gotCursor
+                    hasMorePages = true
+                    if added == 0 then
+                        pageEmptyStreak = pageEmptyStreak + 1
+                        if pageEmptyStreak >= 12 then
+                            hasMorePages = false
+                            nextPageCursor = nil
+                        end
+                    else
+                        pageEmptyStreak = 0
+                    end
+                else
+                    nextPageCursor = nil
+                    hasMorePages = false
+                end
+            end
+        elseif reset then
+            -- Keep paging disabled if live catalog is unavailable; pool batch already shown
+            hasMorePages = false
+        end
+
+        if #catalogItems == 0 then
+            showRotatedPoolBatch(18)
+            hasMorePages = false
+        end
+
+        loadingPages = false
+        if reset then
+            setRefreshLabel("Refresh Catalog")
+        end
+
+        if gen == fetchGeneration and hasMorePages and shouldPrefetchMore() then
+            task.defer(function()
+                if gen == fetchGeneration then
+                    fetchCatalogPage(false)
+                end
+            end)
+        end
+    end
+
+    local function maybeLoadMore()
+        if loadingPages or not hasMorePages then return end
+        if shouldPrefetchMore() then
+            task.spawn(function()
+                fetchCatalogPage(false)
+            end)
+        end
+    end
+
+    -- ===== UI =====
+    -- Manual emote ID bar (textbox + Play)
+    local idRow = Instance.new("Frame", emoteTab)
+    styleRowContainer(idRow)
+    idRow.Position = UDim2.new(0.5, -130, 0, 8)
+    idRow.Size = UDim2.new(0, 260, 0, 32)
+    table.insert(themedElements, {type = "container", obj = idRow})
+
+    local idBox = Instance.new("TextBox", idRow)
+    idBox.BackgroundColor3 = Color3.fromRGB(28, 28, 32)
+    idBox.BorderSizePixel = 0
+    idBox.Position = UDim2.new(0, 8, 0.5, -11)
+    idBox.Size = UDim2.new(1, -72, 0, 22)
+    idBox.Font = Enum.Font.BuilderSansMedium
+    idBox.PlaceholderText = "Paste ID"
+    idBox.PlaceholderColor3 = Color3.fromRGB(90, 92, 100)
+    idBox.Text = ""
+    idBox.TextColor3 = Color3.fromRGB(230, 230, 234)
+    idBox.TextSize = 11
+    idBox.ClearTextOnFocus = false
+    idBox.TextXAlignment = Enum.TextXAlignment.Left
+    Instance.new("UICorner", idBox).CornerRadius = UDim.new(0, 6)
+    do
+        local pad = Instance.new("UIPadding", idBox)
+        pad.PaddingLeft = UDim.new(0, 8)
+    end
+
+    local idPlay = Instance.new("TextButton", idRow)
+    idPlay.BackgroundColor3 = Color3.fromRGB(40, 88, 48)
+    idPlay.BorderSizePixel = 0
+    idPlay.Position = UDim2.new(1, -58, 0.5, -10)
+    idPlay.Size = UDim2.new(0, 50, 0, 20)
+    idPlay.Font = Enum.Font.BuilderSansBold
+    idPlay.Text = "Play"
+    idPlay.TextColor3 = Color3.fromRGB(236, 236, 240)
+    idPlay.TextSize = 10
+    idPlay.AutoButtonColor = false
+    Instance.new("UICorner", idPlay).CornerRadius = UDim.new(0, 4)
+    idPlay.MouseButton1Click:Connect(function()
+        playEmoteById(idBox.Text)
+    end)
+    idBox.FocusLost:Connect(function(enter)
+        if enter then
+            playEmoteById(idBox.Text)
+        end
+    end)
+
+    local stopBtn = Instance.new("TextButton", emoteTab)
+    styleRowContainer(stopBtn)
+    stopBtn.Position = UDim2.new(0.5, -130, 0, 48)
+    stopBtn.Size = UDim2.new(0, 260, 0, 30)
+    stopBtn.Font = Enum.Font.BuilderSansMedium
+    stopBtn.Text = "Stop"
+    stopBtn.TextColor3 = Color3.fromRGB(230, 230, 234)
+    stopBtn.TextSize = 12
+    stopBtn.AutoButtonColor = false
+    table.insert(themedElements, {type = "container", obj = stopBtn})
+    stopBtn.MouseButton1Click:Connect(function()
+        stopEmote()
+    end)
+
+    refreshBtn = Instance.new("TextButton", emoteTab)
+    styleRowContainer(refreshBtn)
+    refreshBtn.Position = UDim2.new(0.5, -130, 0, 86)
+    refreshBtn.Size = UDim2.new(0, 260, 0, 30)
+    refreshBtn.Font = Enum.Font.BuilderSansMedium
+    refreshBtn.Text = "Refresh Catalog"
+    refreshBtn.TextColor3 = Color3.fromRGB(230, 230, 234)
+    refreshBtn.TextSize = 12
+    refreshBtn.AutoButtonColor = false
+    table.insert(themedElements, {type = "container", obj = refreshBtn})
+    refreshBtn.MouseButton1Click:Connect(function()
+        if refreshBtn.Text == "Refreshing…" then return end
+        task.spawn(function()
+            fetchCatalogPage(true)
+        end)
+    end)
+
+    listScroll = Instance.new("ScrollingFrame", emoteTab)
+    listScroll.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+    listScroll.BackgroundTransparency = 0.35
+    listScroll.BorderSizePixel = 0
+    listScroll.Position = UDim2.new(0.5, -130, 0, 124)
+    listScroll.Size = UDim2.new(0, 260, 0, 400)
+    listScroll.ScrollBarThickness = 3
+    listScroll.ScrollBarImageColor3 = Color3.fromRGB(70, 72, 80)
+    listScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    listScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    listScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    Instance.new("UICorner", listScroll).CornerRadius = UDim.new(0, 8)
+    do
+        local pad = Instance.new("UIPadding", listScroll)
+        pad.PaddingTop = UDim.new(0, 6)
+        pad.PaddingBottom = UDim.new(0, 6)
+        pad.PaddingLeft = UDim.new(0, 6)
+        pad.PaddingRight = UDim.new(0, 6)
+    end
+    listLayout = Instance.new("UIListLayout", listScroll)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Padding = UDim.new(0, 6)
+
+    listScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(maybeLoadMore)
+    listScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(maybeLoadMore)
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(maybeLoadMore)
+
+    task.spawn(function()
+        fetchCatalogPage(true)
+    end)
+end)()
+
 createTabButton("Settings")
 tabs["Settings"] = createTabContent()
 
@@ -3841,6 +4984,8 @@ runPanic = function()
         if Act.orbitOff then Act.orbitOff() end
         if Act.headSitOff then Act.headSitOff() end
         if Act.stopSpectate then Act.stopSpectate() end
+        if Act.stopCatalogEmote then Act.stopCatalogEmote() end
+        if Act.tailPhysicsOff then Act.tailPhysicsOff() end
     end)
     -- Cancel any temporary Disable snapshot; panic is permanent.
     Act.disableActive = false
@@ -3990,7 +5135,13 @@ do
     }
 end
 
-CreateToggle(tabs["Settings"], 265, "Mobile Controls", isMobile, function(state)
+CreateToggle(tabs["Settings"], 265, "Low Performance", true, function(state)
+    Perf.lowMode = state and true or false
+    -- Reset throttle timers so changes apply immediately
+    Perf._last = {}
+end)
+
+CreateToggle(tabs["Settings"], 305, "Mobile Controls", isMobile, function(state)
     mobileControlsEnabled = state
     if MobileControls and MobileControls.setVisible then
         MobileControls.setVisible(state)
@@ -4002,7 +5153,7 @@ CreateToggle(tabs["Settings"], 265, "Mobile Controls", isMobile, function(state)
     end
 end)
 
-CreateCycle(tabs["Settings"], 305, "UI Scale", {"75%", "90%", "100%", "110%", "125%"}, "100%", function(val)
+CreateCycle(tabs["Settings"], 345, "UI Scale", {"75%", "90%", "100%", "110%", "125%"}, "100%", function(val)
     local map = {
         ["75%"] = 0.75,
         ["90%"] = 0.9,
@@ -5423,8 +6574,20 @@ table.insert(connections, RunService.Stepped:Connect(function()
     if not noclipEnabled and not Act.invisActive then return end
     local char = LocalPlayer.Character
     if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
+    local now = tick()
+    if char ~= Perf.noclipChar or (now - Perf.noclipAt) >= Perf.interval("noclipRefresh") or #Perf.noclipParts == 0 then
+        Perf.noclipParts = {}
+        Perf.noclipChar = char
+        Perf.noclipAt = now
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                Perf.noclipParts[#Perf.noclipParts + 1] = part
+            end
+        end
+    end
+    for i = 1, #Perf.noclipParts do
+        local part = Perf.noclipParts[i]
+        if part and part.Parent then
             part.CanCollide = false
         end
     end
@@ -5445,9 +6608,28 @@ end))
     local lastVoidTp = 0
     local deathCF = nil
 
+    local spawnCache, spawnCacheAt = nil, 0
     local function getSpawnCFrame()
+        local now = tick()
+        if spawnCache and (now - spawnCacheAt) < 5 then
+            return spawnCache
+        end
         local team = LocalPlayer.Team
         local fallback
+        -- Prefer FindFirstChildOfClass before full map scan
+        local first = workspace:FindFirstChildOfClass("SpawnLocation")
+        if first then
+            local okTeam = true
+            if team then
+                okTeam = first.Neutral or (first.TeamColor == team.TeamColor)
+            end
+            if okTeam then
+                spawnCache = first.CFrame * CFrame.new(0, 5, 0)
+                spawnCacheAt = now
+                return spawnCache
+            end
+            fallback = first
+        end
         for _, sp in ipairs(workspace:GetDescendants()) do
             if sp:IsA("SpawnLocation") then
                 local okTeam = true
@@ -5455,19 +6637,21 @@ end))
                     okTeam = sp.Neutral or (sp.TeamColor == team.TeamColor)
                 end
                 if okTeam then
-                    return sp.CFrame * CFrame.new(0, 5, 0)
+                    spawnCache = sp.CFrame * CFrame.new(0, 5, 0)
+                    spawnCacheAt = now
+                    return spawnCache
                 end
                 if not fallback then fallback = sp end
             end
         end
         if fallback then
-            return fallback.CFrame * CFrame.new(0, 5, 0)
+            spawnCache = fallback.CFrame * CFrame.new(0, 5, 0)
+            spawnCacheAt = now
+            return spawnCache
         end
-        local pads = workspace:FindFirstChild("SpawnLocation")
-        if pads and pads:IsA("SpawnLocation") then
-            return pads.CFrame * CFrame.new(0, 5, 0)
-        end
-        return CFrame.new(0, 80, 0)
+        spawnCache = CFrame.new(0, 80, 0)
+        spawnCacheAt = now
+        return spawnCache
     end
 
     local function tpToSpawn(hrp)
@@ -6086,6 +7270,7 @@ table.insert(connections, RunService.Heartbeat:Connect(function()
         TI.frame.Visible = false
         return
     end
+    if not Perf.allow("targetInfo") then return end
 
     
     if not lockedTarget:IsA("Player") then
@@ -6159,6 +7344,19 @@ end))
 
 table.insert(connections, RunService.RenderStepped:Connect(function()
     if not scriptActive then return end
+
+    local visualsOn = Perf.anyPlayerVisuals()
+    if not visualsOn then
+        if Perf._espWasOn then
+            Perf._espWasOn = false
+            -- one cleanup pass when everything was just turned off
+        else
+            return
+        end
+    else
+        Perf._espWasOn = true
+        if not Perf.allow("esp") then return end
+    end
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
@@ -7092,6 +8290,8 @@ end))
 
 table.insert(connections, RunService.RenderStepped:Connect(function()
     if not scriptActive then return end
+    if not next(playerVisuals) then return end
+    if not Perf.allow("playerVisuals") then return end
     for player, settings in pairs(playerVisuals) do
             if player and player.Parent and player.Character then
                 local char = player.Character
@@ -7354,17 +8554,32 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
                 if obj.box3d then for _, line in pairs(obj.box3d) do pcall(function() line:Remove() end) end end
             end
             npcEspObjects = {}
+            Perf.npcCache = {}
         end
         return
     end
+    if not Perf.allow("npcEsp") then return end
 
-    local npcList = {}
-    for _, m in ipairs(workspace:GetDescendants()) do
-        if m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") and m:FindFirstChild("HumanoidRootPart") and not Players:GetPlayerFromCharacter(m) then
-            table.insert(npcList, m)
+    -- workspace:GetDescendants every frame is extremely expensive — cache it
+    local nowNpc = tick()
+    if (nowNpc - Perf.npcCacheAt) >= Perf.interval("npcScan") or #Perf.npcCache == 0 then
+        local list = {}
+        for _, m in ipairs(workspace:GetDescendants()) do
+            if m:IsA("Model")
+                and m:FindFirstChildOfClass("Humanoid")
+                and m:FindFirstChild("HumanoidRootPart")
+                and not Players:GetPlayerFromCharacter(m) then
+                list[#list + 1] = m
+            end
         end
+        Perf.npcCache = list
+        Perf.npcCacheAt = nowNpc
     end
+    local npcList = Perf.npcCache
     for _, char in ipairs(npcList) do
+        if typeof(char) ~= "Instance" or not char.Parent then
+            -- stale cache entry; refreshed on next npcScan
+        else
         local root = char:FindFirstChild("HumanoidRootPart")
         local head = char:FindFirstChild("Head")
         local hum = char:FindFirstChildOfClass("Humanoid")
@@ -7800,6 +9015,7 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
             if obj.healthBarBg then pcall(function() obj.healthBarBg:Remove() end) obj.healthBarBg = nil end
             if obj.box3d then for _, line in pairs(obj.box3d) do pcall(function() line:Remove() end) end obj.box3d = nil end
         end
+        end -- char.Parent guard
     end
 
     
@@ -8769,8 +9985,445 @@ local function deactivateCmdBar()
 end
 
 
+-- ===== Tail Physics (furry / catalog avatar tails) =====
+-- Drives Motor6D sway from movement so the tail swings back/forth.
+Act.tailPhysics = Act.tailPhysics or {
+    enabled = false,
+    conn = nil,
+    charConn = nil,
+    appearConn = nil,
+    descConn = nil,
+    motors = {}, -- {motor=, baseC0=, pitch=, yaw=, pitchV=, yawV=}
+}
+
+local function tailPhysicsNotify(text)
+    pcall(function()
+        if twilightNotify then
+            twilightNotify("Tail Physics", text, 3)
+        else
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "Tail Physics",
+                Text = text,
+                Duration = 3,
+            })
+        end
+    end)
+end
+
+local function isTailName(name)
+    name = string.lower(tostring(name or ""))
+    if name == "" then return false end
+    if name:find("tail", 1, true) then return true end
+    if name:find("fox", 1, true) and (name:find("butt", 1, true) or name:find("rear", 1, true)) then
+        return true
+    end
+    -- common UGC / furry accessory naming
+    local keys = {
+        "fluffytail", "foxytail", "kittytail", "wolftail", "huskytail", "dragontail", "demontail", "cattail",
+        "fox tail", "cat tail", "wolf tail", "fluffy tail",
+    }
+    for i = 1, #keys do
+        if name:find(keys[i], 1, true) then return true end
+    end
+    return false
+end
+
+local function isLikelyFurryWaist(name)
+    name = string.lower(tostring(name or ""))
+    local keys = {"fox", "cat", "kitty", "wolf", "husky", "puppy", "dragon", "fluff", "eevee", "deer", "bunny", "rabbit", "protogen", "furry", "kitsune", "canine", "feline"}
+    for i = 1, #keys do
+        if name:find(keys[i], 1, true) then return true end
+    end
+    return false
+end
+
+local function getWaistPart(char)
+    return char:FindFirstChild("LowerTorso")
+        or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+        or char:FindFirstChild("HumanoidRootPart")
+end
+
+local function findAccessoryWelds(handle)
+    local found = {}
+    for _, d in ipairs(handle:GetChildren()) do
+        if d:IsA("Weld") or d:IsA("Motor6D") or d:IsA("WeldConstraint") then
+            found[#found + 1] = d
+        end
+    end
+    -- some accessories parent the weld under the accessory
+    local acc = handle.Parent
+    if acc then
+        for _, d in ipairs(acc:GetChildren()) do
+            if d:IsA("Weld") or d:IsA("Motor6D") then
+                found[#found + 1] = d
+            end
+        end
+    end
+    return found
+end
+
+local function ensureTailMotor(char, handle)
+    local waist = getWaistPart(char)
+    if not waist or not handle or not handle:IsA("BasePart") then return nil end
+
+    -- Already tracking this handle?
+    for _, entry in ipairs(Act.tailPhysics.motors) do
+        if entry.handle == handle and entry.motor and entry.motor.Parent then
+            return entry.motor, entry
+        end
+    end
+
+    local existingMotor = nil
+    local existingWeld = nil
+    for _, j in ipairs(findAccessoryWelds(handle)) do
+        if j:IsA("Motor6D") then
+            local p0, p1 = j.Part0, j.Part1
+            if (p0 == waist or p1 == waist or p0 == handle or p1 == handle) then
+                existingMotor = j
+                break
+            end
+        elseif j:IsA("Weld") then
+            existingWeld = j
+        elseif j:IsA("WeldConstraint") then
+            existingWeld = j
+        end
+    end
+
+    if existingMotor then
+        return existingMotor, nil
+    end
+
+    local motor = Instance.new("Motor6D")
+    motor.Name = "TwilightTailMotor"
+    motor.Part0 = waist
+    motor.Part1 = handle
+
+    if existingWeld and existingWeld:IsA("Weld") then
+        -- Preserve pose from original accessory weld
+        if existingWeld.Part1 == handle then
+            motor.Part0 = existingWeld.Part0 or waist
+            motor.C0 = existingWeld.C0
+            motor.C1 = existingWeld.C1
+        elseif existingWeld.Part0 == handle then
+            motor.Part0 = existingWeld.Part1 or waist
+            motor.Part1 = handle
+            motor.C0 = existingWeld.C1
+            motor.C1 = existingWeld.C0
+        else
+            motor.C0 = existingWeld.C0
+            motor.C1 = existingWeld.C1
+        end
+        pcall(function() existingWeld:Destroy() end)
+    elseif existingWeld and existingWeld:IsA("WeldConstraint") then
+        -- WeldConstraint has no C0 — approximate from world poses
+        local p0 = existingWeld.Part0
+        local p1 = existingWeld.Part1
+        if p0 and p1 then
+            motor.Part0 = (p0 == handle) and p1 or p0
+            motor.Part1 = handle
+            motor.C0 = motor.Part0.CFrame:ToObjectSpace(handle.CFrame)
+            motor.C1 = CFrame.new()
+        end
+        pcall(function() existingWeld:Destroy() end)
+    else
+        -- Free-floating / RigidConstraint accessories — attach at current offset
+        motor.C0 = waist.CFrame:ToObjectSpace(handle.CFrame)
+        motor.C1 = CFrame.new()
+        -- Disable rigid constraints that would fight the motor
+        for _, d in ipairs(handle:GetDescendants()) do
+            if d:IsA("RigidConstraint") or d:IsA("WeldConstraint") then
+                pcall(function() d.Enabled = false end)
+            end
+        end
+        if handle.Parent then
+            for _, d in ipairs(handle.Parent:GetDescendants()) do
+                if d:IsA("RigidConstraint") then
+                    pcall(function() d.Enabled = false end)
+                end
+            end
+        end
+    end
+
+    -- Soften collisions so the swinging mesh doesn't shove the avatar
+    pcall(function()
+        handle.CanCollide = false
+        handle.Massless = true
+    end)
+
+    motor.Parent = handle
+    return motor, nil
+end
+
+local function collectTailHandles(char)
+    local handles = {}
+    local seen = {}
+    local function add(h)
+        if h and h:IsA("BasePart") and not seen[h] then
+            seen[h] = true
+            handles[#handles + 1] = h
+        end
+    end
+
+    for _, inst in ipairs(char:GetChildren()) do
+        if inst:IsA("Accessory") or inst:IsA("Hat") then
+            local looksLikeTail = isTailName(inst.Name)
+            local handle = inst:FindFirstChild("Handle")
+            if not looksLikeTail and handle then
+                looksLikeTail = isTailName(handle.Name)
+                if not looksLikeTail then
+                    for _, d in ipairs(inst:GetDescendants()) do
+                        if d:IsA("MeshPart") or d:IsA("SpecialMesh") then
+                            if isTailName(d.Name) then
+                                looksLikeTail = true
+                                break
+                            end
+                        end
+                        if d:IsA("SpecialMesh") and d.MeshId then
+                            -- mesh id alone isn't enough; skip
+                        end
+                    end
+                end
+            end
+            -- Waist accessories are often tails on furry / catalog avatars
+            if not looksLikeTail then
+                pcall(function()
+                    if inst.AccessoryType == Enum.AccessoryType.Waist and handle then
+                        if isTailName(inst.Name) or isTailName(handle.Name) or isLikelyFurryWaist(inst.Name) then
+                            looksLikeTail = true
+                        end
+                    end
+                end)
+            end
+            if looksLikeTail and handle then
+                add(handle)
+            end
+        elseif inst:IsA("BasePart") and isTailName(inst.Name) then
+            add(inst)
+        end
+    end
+
+    -- Catalog Avatar Creator sometimes parents extras differently
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") and isTailName(d.Name) and d.Name ~= "HumanoidRootPart" then
+            add(d)
+        end
+    end
+    return handles
+end
+
+local function clearTailMotors(restore)
+    for _, entry in ipairs(Act.tailPhysics.motors) do
+        if entry.motor and entry.motor.Parent then
+            if restore and entry.baseC0 then
+                pcall(function() entry.motor.C0 = entry.baseC0 end)
+            end
+            -- Keep motor (don't rip accessory off); just leave it at rest
+        end
+    end
+    Act.tailPhysics.motors = {}
+end
+
+local function setupTailPhysics(char)
+    if not char then return 0 end
+    clearTailMotors(false)
+    local count = 0
+    for _, handle in ipairs(collectTailHandles(char)) do
+        local motor = ensureTailMotor(char, handle)
+        if motor then
+            local entry = {
+                motor = motor,
+                handle = handle,
+                baseC0 = motor.C0,
+                pitch = 0,
+                yaw = 0,
+                pitchV = 0,
+                yawV = 0,
+            }
+            Act.tailPhysics.motors[#Act.tailPhysics.motors + 1] = entry
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function stopTailPhysicsLoop()
+    if Act.tailPhysics.conn then
+        pcall(function() Act.tailPhysics.conn:Disconnect() end)
+        Act.tailPhysics.conn = nil
+    end
+    if Act.tailPhysics.charConn then
+        pcall(function() Act.tailPhysics.charConn:Disconnect() end)
+        Act.tailPhysics.charConn = nil
+    end
+    if Act.tailPhysics.appearConn then
+        pcall(function() Act.tailPhysics.appearConn:Disconnect() end)
+        Act.tailPhysics.appearConn = nil
+    end
+    if Act.tailPhysics.descConn then
+        pcall(function() Act.tailPhysics.descConn:Disconnect() end)
+        Act.tailPhysics.descConn = nil
+    end
+end
+
+local function bindTailCharacter(char)
+    if Act.tailPhysics.descConn then
+        pcall(function() Act.tailPhysics.descConn:Disconnect() end)
+        Act.tailPhysics.descConn = nil
+    end
+    if Act.tailPhysics.appearConn then
+        pcall(function() Act.tailPhysics.appearConn:Disconnect() end)
+        Act.tailPhysics.appearConn = nil
+    end
+    if not char then return end
+
+    local n = setupTailPhysics(char)
+    if n > 0 then
+        tailPhysicsNotify("Linked " .. tostring(n) .. " tail part(s)")
+    end
+
+    -- Avatar Creator / wardrobe can add the accessory a moment later
+    Act.tailPhysics.descConn = char.DescendantAdded:Connect(function(inst)
+        if not Act.tailPhysics.enabled then return end
+        if inst:IsA("Accessory") or inst:IsA("Hat") or isTailName(inst.Name) then
+            task.defer(function()
+                if Act.tailPhysics.enabled and LocalPlayer.Character == char then
+                    setupTailPhysics(char)
+                end
+            end)
+        end
+    end)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            Act.tailPhysics.appearConn = hum.ApplyDescriptionFinished:Connect(function()
+                if Act.tailPhysics.enabled and LocalPlayer.Character == char then
+                    task.defer(function() setupTailPhysics(char) end)
+                end
+            end)
+        end)
+    end
+end
+
+Act.tailPhysicsOff = function()
+    Act.tailPhysics.enabled = false
+    stopTailPhysicsLoop()
+    clearTailMotors(true)
+    tailPhysicsNotify("Off")
+end
+
+Act.tailPhysicsOn = function()
+    Act.tailPhysics.enabled = true
+    stopTailPhysicsLoop()
+
+    local char = LocalPlayer.Character
+    bindTailCharacter(char)
+    if #Act.tailPhysics.motors == 0 then
+        tailPhysicsNotify("No tail found — equip a tail accessory, then run again")
+    end
+
+    Act.tailPhysics.charConn = LocalPlayer.CharacterAdded:Connect(function(newChar)
+        if not Act.tailPhysics.enabled then return end
+        task.wait(0.35)
+        bindTailCharacter(newChar)
+    end)
+
+    -- Spring sway: backs up when you run, side sway when you strafe / turn
+    local lastRescan = 0
+    Act.tailPhysics.conn = RunService.Heartbeat:Connect(function(dt)
+        if not Act.tailPhysics.enabled or not scriptActive then return end
+        dt = math.clamp(dt or 0.016, 0.001, 0.05)
+        local c = LocalPlayer.Character
+        if not c then return end
+        local hrp = c:FindFirstChild("HumanoidRootPart")
+        local hum = c:FindFirstChildOfClass("Humanoid")
+        if not hrp then return end
+
+        -- Periodic rescan (Avatar Creator wardrobe swaps)
+        local now = tick()
+        if now - lastRescan > 2.5 then
+            lastRescan = now
+            if #Act.tailPhysics.motors == 0 then
+                setupTailPhysics(c)
+            end
+        end
+
+        local worldVel = hrp.AssemblyLinearVelocity
+        local localVel = hrp.CFrame:VectorToObjectSpace(worldVel)
+        local moveSpeed = Vector3.new(localVel.X, 0, localVel.Z).Magnitude
+        local angY = 0
+        pcall(function()
+            angY = hrp.AssemblyAngularVelocity.Y
+        end)
+
+        -- Target pose (radians): forward run → tip goes back; strafe/turn → side sway
+        local targetPitch = math.clamp(-localVel.Z * 0.035, -0.85, 0.35)
+        local targetYaw = math.clamp(-localVel.X * 0.04 - angY * 0.25, -0.7, 0.7)
+        -- Idle / walk flutter so it always feels alive
+        local t = now
+        local idleAmp = (moveSpeed < 2) and 0.12 or 0.05
+        targetPitch = targetPitch + math.sin(t * 2.4) * idleAmp
+        targetYaw = targetYaw + math.sin(t * 1.85 + 0.7) * idleAmp * 0.85
+        if hum and hum.Jump then
+            targetPitch = targetPitch - 0.25
+        end
+
+        local stiffness = 55
+        local damping = 11
+
+        for i = #Act.tailPhysics.motors, 1, -1 do
+            local e = Act.tailPhysics.motors[i]
+            if not e.motor or not e.motor.Parent or not e.handle or not e.handle.Parent then
+                table.remove(Act.tailPhysics.motors, i)
+            else
+                -- spring-damper toward target
+                local ax = (targetPitch - e.pitch) * stiffness - e.pitchV * damping
+                local ay = (targetYaw - e.yaw) * stiffness - e.yawV * damping
+                e.pitchV = e.pitchV + ax * dt
+                e.yawV = e.yawV + ay * dt
+                e.pitch = e.pitch + e.pitchV * dt
+                e.yaw = e.yaw + e.yawV * dt
+                -- Axis: pitch = up/down (back/forth), yaw = side to side
+                pcall(function()
+                    e.motor.C0 = e.baseC0 * CFrame.Angles(e.pitch, e.yaw, e.yaw * 0.15)
+                end)
+            end
+        end
+    end)
+
+    table.insert(connections, Act.tailPhysics.conn)
+end
+
+Act.tailPhysicsToggle = function()
+    if Act.tailPhysics.enabled then
+        Act.tailPhysicsOff()
+    else
+        Act.tailPhysicsOn()
+    end
+end
+
 local cmdCommands = {}
 
+cmdCommands["emote"] = "NEEDS_ARG"
+cmdCommands["emoteid"] = "NEEDS_ARG"
+cmdCommands["unemote"] = function()
+    if Act.stopCatalogEmote then Act.stopCatalogEmote() end
+end
+cmdCommands["stopemote"] = cmdCommands["unemote"]
+
+-- Furry: tail physics (aliases include common typo)
+cmdCommands["tailphysics"] = function()
+    Act.tailPhysicsToggle()
+end
+cmdCommands["tailphsiycs"] = cmdCommands["tailphysics"]
+cmdCommands["tailphys"] = cmdCommands["tailphysics"]
+cmdCommands["tail"] = cmdCommands["tailphysics"]
+cmdCommands["untailphysics"] = function()
+    Act.tailPhysicsOff()
+end
+cmdCommands["untailphys"] = cmdCommands["untailphysics"]
+cmdCommands["untail"] = cmdCommands["untailphysics"]
+cmdCommands["untailphsiycs"] = cmdCommands["untailphysics"]
 
 local function findPlayer(name)
     local lower = name:lower()
@@ -11707,6 +13360,18 @@ cmdInput.FocusLost:Connect(function(enterPressed)
             if target then
                 startBang(target, parts[3])
             end
+        elseif cmd == "emote" and arg ~= "" then
+            if Act.playCatalogEmote then
+                Act.playCatalogEmote(arg)
+            end
+        elseif cmd == "emoteid" and arg ~= "" then
+            if Act.playCatalogEmoteId then
+                Act.playCatalogEmoteId(arg)
+            end
+        elseif cmd == "tailphysics" or cmd == "tailphsiycs" or cmd == "tailphys" or cmd == "tail" then
+            if Act.tailPhysicsToggle then Act.tailPhysicsToggle() end
+        elseif cmd == "untailphysics" or cmd == "untailphys" or cmd == "untail" or cmd == "untailphsiycs" then
+            if Act.tailPhysicsOff then Act.tailPhysicsOff() end
         elseif cmd == "orbit" and arg ~= "" then
             local target = findPlayer(arg)
             if target then
