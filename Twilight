@@ -607,7 +607,7 @@ end
 
 local playTwilightLoader = (function()
     local TweenService = game:GetService("TweenService")
-    local SCRIPT_VERSION = "2.5"
+    local SCRIPT_VERSION = "3.1"
 
     local Loader = Instance.new("Frame", ScreenGui)
     Loader.Name = "TwilightLoader"
@@ -9903,7 +9903,7 @@ cmdTitle.BackgroundTransparency = 1
 cmdTitle.Position = UDim2.new(0, 0, 0, 0)
 cmdTitle.Size = UDim2.new(1, 0, 1, 0)
 cmdTitle.Font = Enum.Font.BuilderSansMedium
-cmdTitle.Text = "Twilight V2.5"
+cmdTitle.Text = "Twilight V3.1"
 cmdTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
 cmdTitle.TextSize = 12
 cmdTitle.TextXAlignment = Enum.TextXAlignment.Center
@@ -9985,16 +9985,19 @@ local function deactivateCmdBar()
 end
 
 
--- ===== Tail Physics (furry / catalog avatar tails) =====
--- Drives Motor6D sway from movement so the tail swings back/forth.
-Act.tailPhysics = Act.tailPhysics or {
-    enabled = false,
-    conn = nil,
-    charConn = nil,
-    appearConn = nil,
-    descConn = nil,
-    motors = {}, -- {motor=, baseC0=, pitch=, yaw=, pitchV=, yawV=}
-}
+-- ===== Tail Physics (FE / old accessory style) =====
+-- Never create new joints. Drive the EXISTING AccessoryWeld/Motor6D C0 every
+-- frame (classic FE back-hat / accessory scripts). New local Motor6Ds only
+-- exist on your client — that's why the old version looked client-only.
+Act.tailPhysics = Act.tailPhysics or {}
+Act.tailPhysics.enabled = false
+Act.tailPhysics.conn = nil
+Act.tailPhysics.steppedConn = nil
+Act.tailPhysics.charConn = nil
+Act.tailPhysics.appearConn = nil
+Act.tailPhysics.descConn = nil
+Act.tailPhysics.joints = {} -- {joint=, handle=, part0=, baseC0=, baseC1=, mode=, attach=, baseAttachCF=, pitch=, yaw=, pitchV=, yawV=}
+Act.tailPhysics.motors = nil -- legacy (new local Motor6D path — client-only)
 
 local function tailPhysicsNotify(text)
     pcall(function()
@@ -10017,7 +10020,6 @@ local function isTailName(name)
     if name:find("fox", 1, true) and (name:find("butt", 1, true) or name:find("rear", 1, true)) then
         return true
     end
-    -- common UGC / furry accessory naming
     local keys = {
         "fluffytail", "foxytail", "kittytail", "wolftail", "huskytail", "dragontail", "demontail", "cattail",
         "fox tail", "cat tail", "wolf tail", "fluffy tail",
@@ -10044,115 +10046,56 @@ local function getWaistPart(char)
         or char:FindFirstChild("HumanoidRootPart")
 end
 
-local function findAccessoryWelds(handle)
-    local found = {}
-    for _, d in ipairs(handle:GetChildren()) do
-        if d:IsA("Weld") or d:IsA("Motor6D") or d:IsA("WeldConstraint") then
-            found[#found + 1] = d
+-- Prefer the real replicated AccessoryWeld — do not invent joints.
+local function findExistingTailJoint(handle)
+    if not handle then return nil end
+    local candidates = {}
+    local function consider(inst)
+        if not inst then return end
+        if inst:IsA("Weld") or inst:IsA("Motor6D") then
+            candidates[#candidates + 1] = inst
         end
     end
-    -- some accessories parent the weld under the accessory
+    for _, d in ipairs(handle:GetChildren()) do
+        consider(d)
+    end
     local acc = handle.Parent
     if acc then
         for _, d in ipairs(acc:GetChildren()) do
+            consider(d)
+        end
+        for _, d in ipairs(acc:GetDescendants()) do
             if d:IsA("Weld") or d:IsA("Motor6D") then
-                found[#found + 1] = d
+                consider(d)
             end
         end
     end
-    return found
+    -- Prefer named AccessoryWeld, then any weld/motor touching the handle
+    local best, score = nil, -1
+    for i = 1, #candidates do
+        local j = candidates[i]
+        local s = 0
+        local n = string.lower(j.Name)
+        if n == "accessoryweld" or n:find("accessory", 1, true) then s = s + 10 end
+        if j:IsA("Weld") then s = s + 3 end
+        if j:IsA("Motor6D") then s = s + 2 end
+        if j.Part0 == handle or j.Part1 == handle then s = s + 5 end
+        if s > score then
+            score = s
+            best = j
+        end
+    end
+    return best
 end
 
-local function ensureTailMotor(char, handle)
-    local waist = getWaistPart(char)
-    if not waist or not handle or not handle:IsA("BasePart") then return nil end
-
-    -- Already tracking this handle?
-    for _, entry in ipairs(Act.tailPhysics.motors) do
-        if entry.handle == handle and entry.motor and entry.motor.Parent then
-            return entry.motor, entry
-        end
+local function findTailAttachment(handle)
+    if not handle then return nil end
+    local prefer = {"WaistBackAttachment", "BodyBackAttachment", "WaistCenterAttachment", "WaistFrontAttachment"}
+    for i = 1, #prefer do
+        local a = handle:FindFirstChild(prefer[i])
+        if a and a:IsA("Attachment") then return a end
     end
-
-    local existingMotor = nil
-    local existingWeld = nil
-    for _, j in ipairs(findAccessoryWelds(handle)) do
-        if j:IsA("Motor6D") then
-            local p0, p1 = j.Part0, j.Part1
-            if (p0 == waist or p1 == waist or p0 == handle or p1 == handle) then
-                existingMotor = j
-                break
-            end
-        elseif j:IsA("Weld") then
-            existingWeld = j
-        elseif j:IsA("WeldConstraint") then
-            existingWeld = j
-        end
-    end
-
-    if existingMotor then
-        return existingMotor, nil
-    end
-
-    local motor = Instance.new("Motor6D")
-    motor.Name = "TwilightTailMotor"
-    motor.Part0 = waist
-    motor.Part1 = handle
-
-    if existingWeld and existingWeld:IsA("Weld") then
-        -- Preserve pose from original accessory weld
-        if existingWeld.Part1 == handle then
-            motor.Part0 = existingWeld.Part0 or waist
-            motor.C0 = existingWeld.C0
-            motor.C1 = existingWeld.C1
-        elseif existingWeld.Part0 == handle then
-            motor.Part0 = existingWeld.Part1 or waist
-            motor.Part1 = handle
-            motor.C0 = existingWeld.C1
-            motor.C1 = existingWeld.C0
-        else
-            motor.C0 = existingWeld.C0
-            motor.C1 = existingWeld.C1
-        end
-        pcall(function() existingWeld:Destroy() end)
-    elseif existingWeld and existingWeld:IsA("WeldConstraint") then
-        -- WeldConstraint has no C0 — approximate from world poses
-        local p0 = existingWeld.Part0
-        local p1 = existingWeld.Part1
-        if p0 and p1 then
-            motor.Part0 = (p0 == handle) and p1 or p0
-            motor.Part1 = handle
-            motor.C0 = motor.Part0.CFrame:ToObjectSpace(handle.CFrame)
-            motor.C1 = CFrame.new()
-        end
-        pcall(function() existingWeld:Destroy() end)
-    else
-        -- Free-floating / RigidConstraint accessories — attach at current offset
-        motor.C0 = waist.CFrame:ToObjectSpace(handle.CFrame)
-        motor.C1 = CFrame.new()
-        -- Disable rigid constraints that would fight the motor
-        for _, d in ipairs(handle:GetDescendants()) do
-            if d:IsA("RigidConstraint") or d:IsA("WeldConstraint") then
-                pcall(function() d.Enabled = false end)
-            end
-        end
-        if handle.Parent then
-            for _, d in ipairs(handle.Parent:GetDescendants()) do
-                if d:IsA("RigidConstraint") then
-                    pcall(function() d.Enabled = false end)
-                end
-            end
-        end
-    end
-
-    -- Soften collisions so the swinging mesh doesn't shove the avatar
-    pcall(function()
-        handle.CanCollide = false
-        handle.Massless = true
-    end)
-
-    motor.Parent = handle
-    return motor, nil
+    return handle:FindFirstChildOfClass("Attachment")
 end
 
 local function collectTailHandles(char)
@@ -10173,23 +10116,21 @@ local function collectTailHandles(char)
                 looksLikeTail = isTailName(handle.Name)
                 if not looksLikeTail then
                     for _, d in ipairs(inst:GetDescendants()) do
-                        if d:IsA("MeshPart") or d:IsA("SpecialMesh") then
-                            if isTailName(d.Name) then
-                                looksLikeTail = true
-                                break
-                            end
-                        end
-                        if d:IsA("SpecialMesh") and d.MeshId then
-                            -- mesh id alone isn't enough; skip
+                        if (d:IsA("MeshPart") or d:IsA("SpecialMesh")) and isTailName(d.Name) then
+                            looksLikeTail = true
+                            break
                         end
                     end
                 end
             end
-            -- Waist accessories are often tails on furry / catalog avatars
             if not looksLikeTail then
                 pcall(function()
                     if inst.AccessoryType == Enum.AccessoryType.Waist and handle then
                         if isTailName(inst.Name) or isTailName(handle.Name) or isLikelyFurryWaist(inst.Name) then
+                            looksLikeTail = true
+                        end
+                    elseif inst.AccessoryType == Enum.AccessoryType.Back and handle then
+                        if isTailName(inst.Name) or isLikelyFurryWaist(inst.Name) then
                             looksLikeTail = true
                         end
                     end
@@ -10203,7 +10144,6 @@ local function collectTailHandles(char)
         end
     end
 
-    -- Catalog Avatar Creator sometimes parents extras differently
     for _, d in ipairs(char:GetDescendants()) do
         if d:IsA("BasePart") and isTailName(d.Name) and d.Name ~= "HumanoidRootPart" then
             add(d)
@@ -10212,45 +10152,113 @@ local function collectTailHandles(char)
     return handles
 end
 
-local function clearTailMotors(restore)
-    for _, entry in ipairs(Act.tailPhysics.motors) do
-        if entry.motor and entry.motor.Parent then
-            if restore and entry.baseC0 then
-                pcall(function() entry.motor.C0 = entry.baseC0 end)
+local function softHandle(handle)
+    pcall(function()
+        handle.CanCollide = false
+        handle.Massless = true
+        handle:SetNetworkOwner(LocalPlayer)
+    end)
+end
+
+local function clearTailJoints(restore)
+    for _, entry in ipairs(Act.tailPhysics.joints) do
+        if restore then
+            if entry.joint and entry.joint.Parent and entry.baseC0 then
+                pcall(function()
+                    entry.joint.C0 = entry.baseC0
+                    if entry.baseC1 then entry.joint.C1 = entry.baseC1 end
+                end)
             end
-            -- Keep motor (don't rip accessory off); just leave it at rest
+            if entry.attach and entry.attach.Parent and entry.baseAttachCF then
+                pcall(function() entry.attach.CFrame = entry.baseAttachCF end)
+            end
         end
     end
-    Act.tailPhysics.motors = {}
+    Act.tailPhysics.joints = {}
+end
+
+local function linkTailHandle(char, handle)
+    for _, entry in ipairs(Act.tailPhysics.joints) do
+        if entry.handle == handle then
+            return entry
+        end
+    end
+
+    softHandle(handle)
+    local joint = findExistingTailJoint(handle)
+    local entry = {
+        handle = handle,
+        joint = nil,
+        part0 = nil,
+        baseC0 = nil,
+        baseC1 = nil,
+        attach = nil,
+        baseAttachCF = nil,
+        mode = "none",
+        pitch = 0,
+        yaw = 0,
+        pitchV = 0,
+        yawV = 0,
+        sway = CFrame.new(),
+    }
+
+    if joint and (joint:IsA("Weld") or joint:IsA("Motor6D")) then
+        -- FE path: edit the weld that already exists on the character
+        entry.joint = joint
+        entry.part0 = joint.Part0
+        entry.baseC0 = joint.C0
+        entry.baseC1 = joint.C1
+        entry.mode = "c0"
+        if joint.Part1 == handle then
+            entry.part0 = joint.Part0
+        elseif joint.Part0 == handle then
+            entry.part0 = joint.Part1
+        end
+    else
+        -- RigidConstraint accessories have no C0 — nudge the handle attachment locally
+        local attach = findTailAttachment(handle)
+        if attach then
+            entry.attach = attach
+            entry.baseAttachCF = attach.CFrame
+            entry.part0 = getWaistPart(char)
+            entry.mode = "attach"
+        else
+            -- Last resort netless: CFrame-follow without creating joints (local-heavy)
+            entry.part0 = getWaistPart(char)
+            if entry.part0 then
+                entry.baseC0 = entry.part0.CFrame:ToObjectSpace(handle.CFrame)
+                entry.mode = "netless"
+            end
+        end
+    end
+
+    if entry.mode == "none" then return nil end
+    Act.tailPhysics.joints[#Act.tailPhysics.joints + 1] = entry
+    return entry
 end
 
 local function setupTailPhysics(char)
-    if not char then return 0 end
-    clearTailMotors(false)
-    local count = 0
+    if not char then return 0, 0 end
+    clearTailJoints(false)
+    local count, feCount = 0, 0
     for _, handle in ipairs(collectTailHandles(char)) do
-        local motor = ensureTailMotor(char, handle)
-        if motor then
-            local entry = {
-                motor = motor,
-                handle = handle,
-                baseC0 = motor.C0,
-                pitch = 0,
-                yaw = 0,
-                pitchV = 0,
-                yawV = 0,
-            }
-            Act.tailPhysics.motors[#Act.tailPhysics.motors + 1] = entry
+        local entry = linkTailHandle(char, handle)
+        if entry then
             count = count + 1
+            if entry.mode == "c0" then feCount = feCount + 1 end
         end
     end
-    return count
+    return count, feCount
 end
 
 local function stopTailPhysicsLoop()
     if Act.tailPhysics.conn then
         pcall(function() Act.tailPhysics.conn:Disconnect() end)
         Act.tailPhysics.conn = nil
+    end
+    if Act.tailPhysics.steppedConn then
+        pcall(function() Act.tailPhysics.steppedConn:Disconnect() end)
+        Act.tailPhysics.steppedConn = nil
     end
     if Act.tailPhysics.charConn then
         pcall(function() Act.tailPhysics.charConn:Disconnect() end)
@@ -10266,6 +10274,21 @@ local function stopTailPhysicsLoop()
     end
 end
 
+local function applyTailSway(entry)
+    local sway = entry.sway or CFrame.new()
+    if entry.mode == "c0" and entry.joint and entry.joint.Parent and entry.baseC0 then
+        -- Old FE accessory trick: spam C0 on the real AccessoryWeld
+        entry.joint.C0 = entry.baseC0 * sway
+    elseif entry.mode == "attach" and entry.attach and entry.attach.Parent and entry.baseAttachCF then
+        entry.attach.CFrame = entry.baseAttachCF * sway
+    elseif entry.mode == "netless" and entry.handle and entry.part0 and entry.part0.Parent and entry.baseC0 then
+        local cf = entry.part0.CFrame * entry.baseC0 * sway
+        entry.handle.CFrame = cf
+        entry.handle.AssemblyLinearVelocity = entry.part0.AssemblyLinearVelocity
+        entry.handle.AssemblyAngularVelocity = entry.part0.AssemblyAngularVelocity
+    end
+end
+
 local function bindTailCharacter(char)
     if Act.tailPhysics.descConn then
         pcall(function() Act.tailPhysics.descConn:Disconnect() end)
@@ -10277,15 +10300,18 @@ local function bindTailCharacter(char)
     end
     if not char then return end
 
-    local n = setupTailPhysics(char)
+    local n, feN = setupTailPhysics(char)
     if n > 0 then
-        tailPhysicsNotify("Linked " .. tostring(n) .. " tail part(s)")
+        if feN > 0 then
+            tailPhysicsNotify("FE linked " .. tostring(feN) .. "/" .. tostring(n) .. " (AccessoryWeld C0)")
+        else
+            tailPhysicsNotify("Linked " .. tostring(n) .. " (no AccessoryWeld — local fallback)")
+        end
     end
 
-    -- Avatar Creator / wardrobe can add the accessory a moment later
     Act.tailPhysics.descConn = char.DescendantAdded:Connect(function(inst)
         if not Act.tailPhysics.enabled then return end
-        if inst:IsA("Accessory") or inst:IsA("Hat") or isTailName(inst.Name) then
+        if inst:IsA("Accessory") or inst:IsA("Hat") or inst:IsA("Weld") or inst:IsA("Motor6D") or isTailName(inst.Name) then
             task.defer(function()
                 if Act.tailPhysics.enabled and LocalPlayer.Character == char then
                     setupTailPhysics(char)
@@ -10308,7 +10334,7 @@ end
 Act.tailPhysicsOff = function()
     Act.tailPhysics.enabled = false
     stopTailPhysicsLoop()
-    clearTailMotors(true)
+    clearTailJoints(true)
     tailPhysicsNotify("Off")
 end
 
@@ -10318,8 +10344,8 @@ Act.tailPhysicsOn = function()
 
     local char = LocalPlayer.Character
     bindTailCharacter(char)
-    if #Act.tailPhysics.motors == 0 then
-        tailPhysicsNotify("No tail found — equip a tail accessory, then run again")
+    if #Act.tailPhysics.joints == 0 then
+        tailPhysicsNotify("No tail found — equip a waist/back tail, then run again")
     end
 
     Act.tailPhysics.charConn = LocalPlayer.CharacterAdded:Connect(function(newChar)
@@ -10328,9 +10354,8 @@ Act.tailPhysicsOn = function()
         bindTailCharacter(newChar)
     end)
 
-    -- Spring sway: backs up when you run, side sway when you strafe / turn
     local lastRescan = 0
-    Act.tailPhysics.conn = RunService.Heartbeat:Connect(function(dt)
+    local function stepPhysics(dt)
         if not Act.tailPhysics.enabled or not scriptActive then return end
         dt = math.clamp(dt or 0.016, 0.001, 0.05)
         local c = LocalPlayer.Character
@@ -10339,59 +10364,66 @@ Act.tailPhysicsOn = function()
         local hum = c:FindFirstChildOfClass("Humanoid")
         if not hrp then return end
 
-        -- Periodic rescan (Avatar Creator wardrobe swaps)
         local now = tick()
         if now - lastRescan > 2.5 then
             lastRescan = now
-            if #Act.tailPhysics.motors == 0 then
+            if #Act.tailPhysics.joints == 0 then
                 setupTailPhysics(c)
             end
         end
 
-        local worldVel = hrp.AssemblyLinearVelocity
-        local localVel = hrp.CFrame:VectorToObjectSpace(worldVel)
+        local localVel = hrp.CFrame:VectorToObjectSpace(hrp.AssemblyLinearVelocity)
         local moveSpeed = Vector3.new(localVel.X, 0, localVel.Z).Magnitude
         local angY = 0
-        pcall(function()
-            angY = hrp.AssemblyAngularVelocity.Y
-        end)
+        pcall(function() angY = hrp.AssemblyAngularVelocity.Y end)
 
-        -- Target pose (radians): forward run → tip goes back; strafe/turn → side sway
         local targetPitch = math.clamp(-localVel.Z * 0.035, -0.85, 0.35)
         local targetYaw = math.clamp(-localVel.X * 0.04 - angY * 0.25, -0.7, 0.7)
-        -- Idle / walk flutter so it always feels alive
-        local t = now
         local idleAmp = (moveSpeed < 2) and 0.12 or 0.05
-        targetPitch = targetPitch + math.sin(t * 2.4) * idleAmp
-        targetYaw = targetYaw + math.sin(t * 1.85 + 0.7) * idleAmp * 0.85
+        targetPitch = targetPitch + math.sin(now * 2.4) * idleAmp
+        targetYaw = targetYaw + math.sin(now * 1.85 + 0.7) * idleAmp * 0.85
         if hum and hum.Jump then
             targetPitch = targetPitch - 0.25
         end
 
-        local stiffness = 55
-        local damping = 11
-
-        for i = #Act.tailPhysics.motors, 1, -1 do
-            local e = Act.tailPhysics.motors[i]
-            if not e.motor or not e.motor.Parent or not e.handle or not e.handle.Parent then
-                table.remove(Act.tailPhysics.motors, i)
+        local stiffness, damping = 55, 11
+        for i = #Act.tailPhysics.joints, 1, -1 do
+            local e = Act.tailPhysics.joints[i]
+            local alive = e.handle and e.handle.Parent
+            if e.mode == "c0" then
+                alive = alive and e.joint and e.joint.Parent
+            elseif e.mode == "attach" then
+                alive = alive and e.attach and e.attach.Parent
+            elseif e.mode == "netless" then
+                alive = alive and e.part0 and e.part0.Parent
+            end
+            if not alive then
+                table.remove(Act.tailPhysics.joints, i)
             else
-                -- spring-damper toward target
                 local ax = (targetPitch - e.pitch) * stiffness - e.pitchV * damping
                 local ay = (targetYaw - e.yaw) * stiffness - e.yawV * damping
                 e.pitchV = e.pitchV + ax * dt
                 e.yawV = e.yawV + ay * dt
                 e.pitch = e.pitch + e.pitchV * dt
                 e.yaw = e.yaw + e.yawV * dt
-                -- Axis: pitch = up/down (back/forth), yaw = side to side
-                pcall(function()
-                    e.motor.C0 = e.baseC0 * CFrame.Angles(e.pitch, e.yaw, e.yaw * 0.15)
-                end)
+                e.sway = CFrame.Angles(e.pitch, e.yaw, e.yaw * 0.15)
+                pcall(applyTailSway, e)
             end
+        end
+    end
+
+    -- Heartbeat: spring integrate + C0 write
+    Act.tailPhysics.conn = RunService.Heartbeat:Connect(stepPhysics)
+    -- Stepped: re-apply C0 after physics (old netless / FE accessory spam)
+    Act.tailPhysics.steppedConn = RunService.Stepped:Connect(function()
+        if not Act.tailPhysics.enabled or not scriptActive then return end
+        for i = 1, #Act.tailPhysics.joints do
+            pcall(applyTailSway, Act.tailPhysics.joints[i])
         end
     end)
 
     table.insert(connections, Act.tailPhysics.conn)
+    table.insert(connections, Act.tailPhysics.steppedConn)
 end
 
 Act.tailPhysicsToggle = function()
