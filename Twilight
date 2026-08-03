@@ -607,7 +607,7 @@ end
 
 local playTwilightLoader = (function()
     local TweenService = game:GetService("TweenService")
-    local SCRIPT_VERSION = "3.1"
+    local SCRIPT_VERSION = "3.3"
 
     local Loader = Instance.new("Frame", ScreenGui)
     Loader.Name = "TwilightLoader"
@@ -3926,8 +3926,14 @@ tabs["Emote"] = createTabContent()
         return true
     end
 
-    local function setStatus(_text)
-        -- status line removed from Emote tab
+    local function setStatus(text)
+        text = tostring(text or "")
+        if text == "" then return end
+        pcall(function()
+            if twilightNotify then
+                twilightNotify("Emote", text, 2.5)
+            end
+        end)
     end
 
     local function getHumanoid()
@@ -3957,7 +3963,18 @@ tabs["Emote"] = createTabContent()
         if track then
             pcall(function() track:Stop(0.1) end)
         end
-        setStatus("Stopped")
+        -- Also stop PlayEmote tracks we may have started
+        local hum = getHumanoid()
+        if hum then
+            pcall(function()
+                for _, t in ipairs(hum:GetPlayingAnimationTracks()) do
+                    local n = string.lower(tostring(t.Name or ""))
+                    if n:find("twilight", 1, true) then
+                        pcall(function() t:Stop(0.1) end)
+                    end
+                end
+            end)
+        end
     end
 
     local function extractAnimIdFromInstance(root)
@@ -3972,13 +3989,13 @@ tabs["Emote"] = createTabContent()
         local best = nil
         local ok, desc = pcall(function() return prefer:GetDescendants() end)
         if ok and typeof(desc) == "table" then
-            for i = 1, math.min(#desc, 120) do
+            for i = 1, math.min(#desc, 200) do
                 local d = desc[i]
                 if d and d:IsA("Animation") then
                     local num = tostring(d.AnimationId):match("%d+")
                     if num then
                         local n = string.lower(d.Name)
-                        if n == "play" or n == "animation" or n == "emote" then
+                        if n == "play" or n == "animation" or n == "emote" or n == "r15" then
                             return num
                         end
                         best = best or num
@@ -3990,7 +4007,7 @@ tabs["Emote"] = createTabContent()
         if prefer ~= root then
             ok, desc = pcall(function() return root:GetDescendants() end)
             if ok and typeof(desc) == "table" then
-                for i = 1, math.min(#desc, 120) do
+                for i = 1, math.min(#desc, 200) do
                     local d = desc[i]
                     if d and d:IsA("Animation") then
                         local num = tostring(d.AnimationId):match("%d+")
@@ -3998,6 +4015,14 @@ tabs["Emote"] = createTabContent()
                     end
                 end
             end
+        end
+        -- FindFirstChildWhichIsA deep
+        local anim
+        pcall(function()
+            anim = root:FindFirstChildWhichIsA("Animation", true)
+        end)
+        if anim then
+            return tostring(anim.AnimationId):match("%d+")
         end
         return nil
     end
@@ -4009,14 +4034,14 @@ tabs["Emote"] = createTabContent()
             return animResolveCache[assetId]
         end
 
-        -- 1) GetObjects
+        -- 1) GetObjects (executor / studio)
         local ok, objs = pcall(function()
             return game:GetObjects("rbxassetid://" .. assetId)
         end)
         if ok and typeof(objs) == "table" and objs[1] then
             local resolved = extractAnimIdFromInstance(objs[1])
             pcall(function() objs[1]:Destroy() end)
-            if resolved then
+            if resolved and resolved ~= "" then
                 animResolveCache[assetId] = resolved
                 return resolved
             end
@@ -4029,7 +4054,7 @@ tabs["Emote"] = createTabContent()
         if ok and objs then
             local resolved = extractAnimIdFromInstance(objs)
             pcall(function() objs:Destroy() end)
-            if resolved then
+            if resolved and resolved ~= "" then
                 animResolveCache[assetId] = resolved
                 return resolved
             end
@@ -4039,12 +4064,35 @@ tabs["Emote"] = createTabContent()
         return nil
     end
 
+    local function waitTrackReady(track, timeout)
+        if not track then return false end
+        local t0 = tick()
+        timeout = timeout or 1.8
+        while track and track.Parent ~= nil and (tick() - t0) < timeout do
+            local len = 0
+            pcall(function() len = track.Length or 0 end)
+            if len > 0 then return true end
+            if track.IsPlaying and (tick() - t0) > 0.35 then
+                -- some assets report Length late but are already driving
+                return true
+            end
+            task.wait(0.05)
+        end
+        local len = 0
+        pcall(function() len = track.Length or 0 end)
+        return len > 0 or (track and track.IsPlaying)
+    end
+
     local function playAnimationId(animId, label)
         animId = tostring(animId or ""):match("%d+")
         if not animId then return false end
         local hum = getHumanoid()
         if not hum then
             setStatus("No character")
+            return false
+        end
+        if hum.RigType ~= Enum.HumanoidRigType.R15 then
+            setStatus("Emotes need R15")
             return false
         end
         local animator = getAnimator(hum)
@@ -4070,19 +4118,23 @@ tabs["Emote"] = createTabContent()
             return t
         end)
         if not trackOk or not track then
-            setStatus("Load failed")
             return false
         end
+
+        if not waitTrackReady(track, 1.8) then
+            pcall(function() track:Stop(0) end)
+            return false
+        end
+
         Act.catalogEmote.track = track
         Act.catalogEmote.selected = tostring(label or animId)
-        setStatus("Playing " .. tostring(label or animId))
         return true
     end
 
     local function playEmoteById(id)
         id = tostring(id or ""):gsub("rbxassetid://", ""):match("%d+")
         if not id then
-            setStatus("Invalid emote / animation ID")
+            setStatus("Invalid emote ID")
             return false
         end
         local now = tick()
@@ -4092,47 +4144,40 @@ tabs["Emote"] = createTabContent()
         playToken = playToken + 1
         local token = playToken
 
-        -- Cached resolve = instant replay
-        local cached = animResolveCache[id]
-        if cached then
-            return playAnimationId(cached, id)
-        end
-
-        setStatus("Loading emote…")
         task.spawn(function()
             if token ~= playToken then return end
 
-            -- Try Humanoid PlayEmote first (works for some catalog emotes)
-            local hum = getHumanoid()
-            if hum then
-                local ename = "Twilight_" .. id
-                local ok, played = pcall(function()
-                    local desc = hum:GetAppliedDescription()
-                    if desc then
-                        pcall(function() desc:AddEmote(ename, tonumber(id)) end)
-                    end
-                    return hum:PlayEmote(ename)
-                end)
-                if token ~= playToken then return end
-                if ok and played then
-                    Act.catalogEmote.selected = ename
-                    setStatus("Playing emote id " .. id)
+            -- 1) Cached resolve
+            local animId = animResolveCache[id]
+            if animId then
+                if playAnimationId(animId, id) then
+                    if token == playToken then setStatus("Playing " .. id) end
                     return
                 end
+                -- stale cache
+                animResolveCache[id] = nil
+                if token ~= playToken then return end
             end
 
-            -- Resolve catalog emote → nested Animation id, then play
-            local animId = resolveEmoteAnimationId(id)
+            -- 2) Resolve catalog emote → nested Animation id, then play
+            animId = resolveEmoteAnimationId(id)
             if token ~= playToken then return end
-            if not animId then
-                -- Last resort: try the raw id as an Animation asset
-                if playAnimationId(id, id) then
-                    return
-                end
-                setStatus("Could not resolve emote " .. id)
+            if animId and playAnimationId(animId, id) then
+                if token == playToken then setStatus("Playing " .. id) end
                 return
             end
-            playAnimationId(animId, id)
+            if token ~= playToken then return end
+
+            -- 3) Direct Animation asset only if Length actually loads
+            if playAnimationId(id, id) then
+                animResolveCache[id] = id
+                if token == playToken then setStatus("Playing " .. id) end
+                return
+            end
+
+            if token == playToken then
+                setStatus("Couldn't play " .. id .. " (need GetObjects)")
+            end
         end)
         return true
     end
@@ -4159,7 +4204,7 @@ tabs["Emote"] = createTabContent()
             return hum:PlayEmote(name)
         end)
         if ok and played then
-            setStatus("Playing emote: " .. name)
+            setStatus("Playing " .. name)
             return true
         end
         setStatus("Failed: " .. name)
@@ -4283,13 +4328,12 @@ tabs["Emote"] = createTabContent()
 
     local function appendEmoteItem(item)
         if not item or not item.id then return false end
-        -- Keep id as string key-safe for large asset ids
-        local idNum = tonumber(item.id)
-        local idKey = tostring(item.id):match("%d+") or tostring(item.id)
-        if not idNum or seenIds[idKey] then return false end
-        if not verifyIsEmoteId(idNum) then return false end
+        -- Keep id as string — large catalog IDs can lose precision as numbers
+        local idKey = tostring(item.id):match("%d+")
+        if not idKey or seenIds[idKey] then return false end
+        if not verifyIsEmoteId(idKey) then return false end
         seenIds[idKey] = true
-        item.id = idNum
+        item.id = idKey
         catalogItems[#catalogItems + 1] = item
         if listScroll then
             makeEmoteRow(item, #catalogItems)
@@ -9903,7 +9947,7 @@ cmdTitle.BackgroundTransparency = 1
 cmdTitle.Position = UDim2.new(0, 0, 0, 0)
 cmdTitle.Size = UDim2.new(1, 0, 1, 0)
 cmdTitle.Font = Enum.Font.BuilderSansMedium
-cmdTitle.Text = "Twilight V3.1"
+cmdTitle.Text = "Twilight V3.3"
 cmdTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
 cmdTitle.TextSize = 12
 cmdTitle.TextXAlignment = Enum.TextXAlignment.Center
@@ -10567,8 +10611,20 @@ cmdCommands["unantivoid"] = function()
 end
 cmdCommands["void"] = cmdCommands["antivoid"]
 cmdCommands["unvoid"] = cmdCommands["unantivoid"]
-cmdCommands["speed"] = function() if toggleRegistry["Walk Speed"] then toggleRegistry["Walk Speed"].set(not speedEnabled) end end
+cmdCommands["speed"] = "NEEDS_ARG"
+cmdCommands["ws"] = "NEEDS_ARG"
+cmdCommands["walkspeed"] = "NEEDS_ARG"
 cmdCommands["unspeed"] = function() if toggleRegistry["Walk Speed"] then toggleRegistry["Walk Speed"].set(false) end end
+cmdCommands["unws"] = cmdCommands["unspeed"]
+cmdCommands["unwalkspeed"] = cmdCommands["unspeed"]
+cmdCommands["jumppower"] = "NEEDS_ARG"
+cmdCommands["jumpower"] = "NEEDS_ARG"
+cmdCommands["jp"] = "NEEDS_ARG"
+cmdCommands["jump"] = "NEEDS_ARG"
+cmdCommands["unjumppower"] = function() if toggleRegistry["Jump Power"] then toggleRegistry["Jump Power"].set(false) end end
+cmdCommands["unjumpower"] = cmdCommands["unjumppower"]
+cmdCommands["unjp"] = cmdCommands["unjumppower"]
+cmdCommands["unjump"] = cmdCommands["unjumppower"]
 cmdCommands["noclip"] = function()
     if toggleRegistry["Noclip"] then
         toggleRegistry["Noclip"].set(not noclipEnabled)
@@ -10590,8 +10646,12 @@ cmdCommands["infjump"] = function()
     end
 end
 cmdCommands["uninfjump"] = function() if toggleRegistry["Infinite Jump"] then toggleRegistry["Infinite Jump"].set(false) end end
-cmdCommands["sprint"] = function() if toggleRegistry["Sprint"] then toggleRegistry["Sprint"].set(not sprintEnabled) end end
+cmdCommands["sprint"] = "NEEDS_ARG"
 cmdCommands["unsprint"] = function() if toggleRegistry["Sprint"] then toggleRegistry["Sprint"].set(false) end end
+cmdCommands["flyspeed"] = "NEEDS_ARG"
+cmdCommands["freecamspeed"] = "NEEDS_ARG"
+cmdCommands["spook"] = "NEEDS_ARG"
+cmdCommands["spookplayer"] = "NEEDS_ARG"
 cmdCommands["fullbright"] = function() if toggleRegistry["Full Illumination"] then toggleRegistry["Full Illumination"].set(not fullbrightEnabled) end end
 cmdCommands["unfullbright"] = function() if toggleRegistry["Full Illumination"] then toggleRegistry["Full Illumination"].set(false) end end
 cmdCommands["nofog"] = function() if toggleRegistry["Clear Atmosphere"] then toggleRegistry["Clear Atmosphere"].set(not noFogEnabled) end end
@@ -11628,14 +11688,15 @@ local function attachFlyParts(char)
     flyBodyVel = Instance.new("BodyVelocity")
     flyBodyVel.Name = "XthosFlyVel"
     flyBodyVel.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    flyBodyVel.P = 9e4 -- high = snap to target speed (no coast/drag)
     flyBodyVel.Velocity = Vector3.new(0, 0, 0)
     flyBodyVel.Parent = hrp
 
     flyBodyGyro = Instance.new("BodyGyro")
     flyBodyGyro.Name = "XthosFlyGyro"
     flyBodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-    flyBodyGyro.P = 1000
-    flyBodyGyro.D = 200
+    flyBodyGyro.P = 50000
+    flyBodyGyro.D = 50 -- low damp = snappy turn, less "heavy" feel
     flyBodyGyro.CFrame = hrp.CFrame
     flyBodyGyro.Parent = hrp
 
@@ -11695,7 +11756,10 @@ local function ensureFlyLoop()
             velocity = velocity.Unit * FLY_SPEED
         end
 
+        -- Force exact velocity every frame (kills BodyVelocity coast/drag)
+        bvel.P = 9e4
         bvel.Velocity = velocity
+        root.AssemblyLinearVelocity = velocity
         if bgyro then
             bgyro.CFrame = cam.CFrame
         end
@@ -12128,12 +12192,24 @@ Act.freezeOn = cmdCommands["freeze"]
 Act.freezeOff = cmdCommands["unfreeze"]
 
 ;(function()
-    -- NuclearBobo-style invis: heartbeat hide under map, restore on RenderStepped.
-    -- You keep normal movement/camera; others see you underground.
+    -- Stay UNDER the map the whole time invis is on (not a flicker).
+    -- Flicker only replicates when you move — that's why standing still did nothing.
+    -- CameraOffset keeps YOUR view at surface height; BodyVelocity stops freefall + walks.
     Act.invisTeleportY = -100 -- below map, shallow enough to still hear voices
     local VISUAL_TRANSPARENCY = 0.7
+    local MOVE_SPEED = 16
+    local BV_NAME = "TwilightInvisVel"
+    local BG_NAME = "TwilightInvisGyro"
     local savedTrans = {}
     local loopConn = nil
+    local buried = false -- true once we've snapped under
+
+    local function invisDy()
+        local dy = tonumber(Act.invisTeleportY) or -100
+        if dy > -20 then dy = -20 end
+        if dy < -250 then dy = -250 end
+        return dy
+    end
 
     local function restoreTransparency()
         for obj, t in pairs(savedTrans) do
@@ -12153,7 +12229,6 @@ Act.freezeOff = cmdCommands["unfreeze"]
                 pcall(function() obj.Transparency = VISUAL_TRANSPARENCY end)
             end
         end
-        -- Hide parts nested inside the torso only (not the torso itself).
         for _, torsoName in ipairs({"Torso", "UpperTorso", "LowerTorso"}) do
             local torso = char:FindFirstChild(torsoName)
             if torso then
@@ -12169,6 +12244,73 @@ Act.freezeOff = cmdCommands["unfreeze"]
         end
     end
 
+    local function clearHoldParts(root)
+        if not root then return end
+        local bv = root:FindFirstChild(BV_NAME)
+        if bv then pcall(function() bv:Destroy() end) end
+        local bg = root:FindFirstChild(BG_NAME)
+        if bg then pcall(function() bg:Destroy() end) end
+    end
+
+    local function ensureHoldParts(root)
+        if not root then return nil, nil end
+        local bv = root:FindFirstChild(BV_NAME)
+        if not bv then
+            bv = Instance.new("BodyVelocity")
+            bv.Name = BV_NAME
+            bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            bv.P = 1250
+            bv.Velocity = Vector3.zero
+            bv.Parent = root
+        end
+        local bg = root:FindFirstChild(BG_NAME)
+        if not bg then
+            bg = Instance.new("BodyGyro")
+            bg.Name = BG_NAME
+            bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+            bg.P = 3000
+            bg.D = 500
+            bg.CFrame = root.CFrame
+            bg.Parent = root
+        end
+        return bv, bg
+    end
+
+    local function getMoveFlat()
+        local cam = workspace.CurrentCamera
+        local look = cam and cam.CFrame.LookVector or Vector3.new(0, 0, -1)
+        local right = cam and cam.CFrame.RightVector or Vector3.new(1, 0, 0)
+        look = Vector3.new(look.X, 0, look.Z)
+        right = Vector3.new(right.X, 0, right.Z)
+        if look.Magnitude > 0.05 then look = look.Unit else look = Vector3.new(0, 0, -1) end
+        if right.Magnitude > 0.05 then right = right.Unit else right = Vector3.new(1, 0, 0) end
+
+        local dir = Vector3.zero
+        if not UserInputService:GetFocusedTextBox() then
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + look end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - look end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - right end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + right end
+        end
+        -- Mobile / thumbstick
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum and hum.MoveDirection.Magnitude > 0.05 then
+            local md = Vector3.new(hum.MoveDirection.X, 0, hum.MoveDirection.Z)
+            if md.Magnitude > 0.05 then
+                if dir.Magnitude < 0.05 then
+                    dir = md
+                end
+            end
+        end
+        if dir.Magnitude > 0.05 then return dir.Unit end
+        return Vector3.zero
+    end
+
+    local function walkSpeed()
+        if speedEnabled then return math.max(defaultSpeed, 8) end
+        return MOVE_SPEED
+    end
+
     local function ensureLoop()
         if loopConn then return end
         loopConn = RunService.Heartbeat:Connect(function()
@@ -12178,23 +12320,43 @@ Act.freezeOff = cmdCommands["unfreeze"]
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             if not root or not hum or hum.Health <= 0 then return end
 
-            local cf = root.CFrame
-            local camOffset = hum.CameraOffset
-            local dy = tonumber(Act.invisTeleportY) or -100
-            local hidden = cf * CFrame.new(0, dy, 0)
-
-            -- Send body under the map for replication, keep camera at surface.
-            root.CFrame = hidden
-            hum.CameraOffset = hidden:ToObjectSpace(CFrame.new(cf.Position)).Position
-
-            RunService.RenderStepped:Wait()
-
-            -- Put yourself back for your own screen so you move/look normal.
-            if root.Parent then
-                root.CFrame = cf
+            local dy = invisDy()
+            -- Stay under every frame (idle still replicates — no flicker)
+            if not buried then
+                root.CFrame = root.CFrame * CFrame.new(0, dy, 0)
+                buried = true
             end
-            if hum.Parent then
-                hum.CameraOffset = Act.invisActive and camOffset or Vector3.zero
+
+            hum.CameraOffset = Vector3.new(0, -dy, 0)
+            pcall(function()
+                hum.PlatformStand = true
+                hum:ChangeState(Enum.HumanoidStateType.Physics)
+            end)
+
+            local bv, bg = ensureHoldParts(root)
+            local move = getMoveFlat()
+            local spd = walkSpeed()
+
+            if bv then
+                if move.Magnitude > 0.05 then
+                    -- Horizontal only — no fly while invis
+                    bv.Velocity = Vector3.new(move.X * spd, 0, move.Z * spd)
+                else
+                    -- Hold still underground (no fall / no float). Tiny XZ noise keeps net awake.
+                    local t = os.clock() * 8
+                    bv.Velocity = Vector3.new(math.sin(t) * 0.15, 0, math.cos(t) * 0.15)
+                end
+            end
+            if bg then
+                local cam = workspace.CurrentCamera
+                if cam then
+                    local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+                    if flat.Magnitude > 0.05 then
+                        bg.CFrame = CFrame.lookAt(root.Position, root.Position + flat.Unit)
+                    else
+                        bg.CFrame = root.CFrame
+                    end
+                end
             end
         end)
         table.insert(connections, loopConn)
@@ -12215,9 +12377,25 @@ Act.freezeOff = cmdCommands["unfreeze"]
 
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+
+        if buried and root then
+            local dy = invisDy()
+            pcall(function()
+                root.CFrame = root.CFrame * CFrame.new(0, -dy, 0)
+                root.AssemblyLinearVelocity = Vector3.zero
+            end)
+        end
+        buried = false
+        clearHoldParts(root)
+
         restoreTransparency()
         if hum then
-            pcall(function() hum.CameraOffset = Vector3.zero end)
+            pcall(function()
+                hum.CameraOffset = Vector3.zero
+                hum.PlatformStand = false
+                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end)
         end
     end
 
@@ -12233,11 +12411,24 @@ Act.freezeOff = cmdCommands["unfreeze"]
 
         if Act.freecamOff then pcall(Act.freecamOff) end
         if Act.stopSpectate then pcall(Act.stopSpectate) end
+        if Act.flyOff then pcall(Act.flyOff) end
 
+        buried = false
         ensureLoop()
         applyTransparency(char)
         Act.invisActive = true
         syncToggle("Invisible", true)
+
+        -- Snap under immediately so ghost works before you walk
+        local dy = invisDy()
+        hrp.CFrame = hrp.CFrame * CFrame.new(0, dy, 0)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hum.CameraOffset = Vector3.new(0, -dy, 0)
+        buried = true
+        ensureHoldParts(hrp)
+        pcall(function()
+            hum.PlatformStand = true
+        end)
 
         if Act._invisDied then
             pcall(function() Act._invisDied:Disconnect() end)
@@ -13355,6 +13546,114 @@ cmdInput.FocusLost:Connect(function(enterPressed)
                     myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 3, 0)
                 end
             end
+        elseif cmd == "spook" or cmd == "spookplayer" then
+            if arg ~= "" then
+                local target = findPlayer(arg)
+                if target and target.Character and target ~= LocalPlayer then
+                    local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+                    local myChar = LocalPlayer.Character
+                    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if targetRoot and myRoot then
+                        local returnCF = myRoot.CFrame
+                        -- Behind target (+Z is behind in character space), face them
+                        local behindPos = (targetRoot.CFrame * CFrame.new(0, 0, 3.5)).Position
+                        myRoot.CFrame = CFrame.lookAt(behindPos, targetRoot.Position)
+                        task.delay(1, function()
+                            local char2 = LocalPlayer.Character
+                            local root2 = char2 and char2:FindFirstChild("HumanoidRootPart")
+                            if root2 then
+                                root2.CFrame = returnCF
+                            end
+                        end)
+                        pcall(function()
+                            if twilightNotify then
+                                twilightNotify("Spook", "Boo → " .. (target.DisplayName or target.Name), 2)
+                            end
+                        end)
+                    end
+                end
+            end
+        elseif cmd == "ws" or cmd == "walkspeed" or cmd == "speed" then
+            local n = tonumber(arg)
+            if n then
+                defaultSpeed = math.clamp(math.floor(n + 0.5), 1, 500)
+                if toggleRegistry["Walk Speed"] then
+                    toggleRegistry["Walk Speed"].set(true)
+                else
+                    speedEnabled = true
+                end
+                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if hum then hum.WalkSpeed = defaultSpeed end
+                pcall(function()
+                    if twilightNotify then twilightNotify("Walk Speed", tostring(defaultSpeed), 2) end
+                end)
+            else
+                if toggleRegistry["Walk Speed"] then
+                    toggleRegistry["Walk Speed"].set(not speedEnabled)
+                end
+            end
+        elseif cmd == "jp" or cmd == "jumppower" or cmd == "jumpower" or cmd == "jump" then
+            local n = tonumber(arg)
+            if n then
+                defaultJumpPower = math.clamp(math.floor(n + 0.5), 1, 500)
+                if toggleRegistry["Jump Power"] then
+                    toggleRegistry["Jump Power"].set(true)
+                else
+                    jumpPowerEnabled = true
+                end
+                local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    hum.UseJumpPower = true
+                    hum.JumpPower = defaultJumpPower
+                end
+                pcall(function()
+                    if twilightNotify then twilightNotify("Jump Power", tostring(defaultJumpPower), 2) end
+                end)
+            else
+                if toggleRegistry["Jump Power"] then
+                    toggleRegistry["Jump Power"].set(not jumpPowerEnabled)
+                end
+            end
+        elseif cmd == "sprint" then
+            local n = tonumber(arg)
+            if n then
+                sprintSpeed = math.clamp(math.floor(n + 0.5), 1, 500)
+                if toggleRegistry["Sprint"] then
+                    toggleRegistry["Sprint"].set(true)
+                else
+                    sprintEnabled = true
+                end
+                pcall(function()
+                    if twilightNotify then twilightNotify("Sprint", tostring(sprintSpeed), 2) end
+                end)
+            else
+                if toggleRegistry["Sprint"] then
+                    toggleRegistry["Sprint"].set(not sprintEnabled)
+                end
+            end
+        elseif cmd == "flyspeed" then
+            local n = tonumber(arg)
+            if n then
+                flySpeedVal = math.clamp(math.floor(n + 0.5), 1, 500)
+                FLY_SPEED = flySpeedVal
+                if toggleRegistry["Fly"] and toggleRegistry["Fly"].get() and Act.flyOn then
+                    Act.flyOn(flySpeedVal)
+                end
+                pcall(function()
+                    if twilightNotify then twilightNotify("Fly Speed", tostring(flySpeedVal), 2) end
+                end)
+            end
+        elseif cmd == "freecamspeed" then
+            local n = tonumber(arg)
+            if n then
+                freecamSpeedVal = math.clamp(math.floor(n + 0.5), 1, 500)
+                if toggleRegistry["Freecam"] and toggleRegistry["Freecam"].get() and Act.freecamOn then
+                    Act.freecamOn(freecamSpeedVal)
+                end
+                pcall(function()
+                    if twilightNotify then twilightNotify("Freecam Speed", tostring(freecamSpeedVal), 2) end
+                end)
+            end
         elseif cmd == "setwaypoint" or cmd == "setwp" then
             local name = arg
             local colorArg = parts[3]
@@ -13624,10 +13923,20 @@ cmdInput.FocusLost:Connect(function(enterPressed)
             end
         elseif cmd == "fly" then
             local spd = tonumber(arg)
-            startFly(spd)
+            if spd then
+                flySpeedVal = math.clamp(math.floor(spd + 0.5), 1, 500)
+                startFly(flySpeedVal)
+            else
+                startFly(nil)
+            end
         elseif cmd == "freecam" then
             local spd = tonumber(arg)
-            startFreecam(spd)
+            if spd then
+                freecamSpeedVal = math.clamp(math.floor(spd + 0.5), 1, 500)
+                startFreecam(freecamSpeedVal)
+            else
+                startFreecam(nil)
+            end
         elseif (cmd == "join" or cmd == "joinplr") and arg ~= "" then
             local query = raw:sub(#cmd + 2):gsub("^%s+", ""):gsub("%s+$", "")
             joinPlayerServer(query)
