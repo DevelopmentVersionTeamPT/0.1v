@@ -9505,6 +9505,7 @@ CloseButton.MouseButton1Click:Connect(function()
     
     if flyActive then
         flyActive = false
+        Act.flyActive = false
         if flyConnection then flyConnection:Disconnect() flyConnection = nil end
         local char = LocalPlayer.Character
         if char then
@@ -11329,7 +11330,32 @@ local jerkActive = false
 local jerkPlaying = false
 local jerkTrack = nil
 local jerkAnim = nil
+local jerkAnimId = nil
 local jerkTask = nil
+
+local JERK_ANIM_R15 = "rbxassetid://698251653"
+local JERK_ANIM_R6 = "rbxassetid://72042024"
+
+local function isR15Character(char)
+    if not char then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local ok, rig = pcall(function() return hum.RigType end)
+        if ok and rig == Enum.HumanoidRigType.R6 then return false end
+        if ok and rig == Enum.HumanoidRigType.R15 then return true end
+    end
+    return char:FindFirstChild("UpperTorso") ~= nil
+end
+
+local function getJerkAnimator(hum)
+    if not hum then return nil end
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator = Instance.new("Animator")
+        animator.Parent = hum
+    end
+    return animator
+end
 
 local function stopJerkAnim()
     jerkPlaying = false
@@ -11350,9 +11376,11 @@ local function playJerkAnim()
     stopJerkAnim()
     jerkPlaying = true
 
-    if not jerkAnim then
+    local wantId = isR15Character(char) and JERK_ANIM_R15 or JERK_ANIM_R6
+    if not jerkAnim or jerkAnimId ~= wantId then
         jerkAnim = Instance.new("Animation")
-        jerkAnim.AnimationId = "rbxassetid://698251653"
+        jerkAnim.AnimationId = wantId
+        jerkAnimId = wantId
     end
 
     -- This anim only looks right when a short middle section is rewound.
@@ -11362,18 +11390,41 @@ local function playJerkAnim()
             local h = c and c:FindFirstChildOfClass("Humanoid")
             if not h or h.Health <= 0 then break end
 
-            local track = h:LoadAnimation(jerkAnim)
+            local id = isR15Character(c) and JERK_ANIM_R15 or JERK_ANIM_R6
+            if jerkAnimId ~= id then
+                jerkAnim = Instance.new("Animation")
+                jerkAnim.AnimationId = id
+                jerkAnimId = id
+            end
+
+            local animator = getJerkAnimator(h)
+            if not animator then break end
+
+            local ok, track = pcall(function()
+                return animator:LoadAnimation(jerkAnim)
+            end)
+            if not ok or not track then
+                -- Fallback for older hum:LoadAnimation paths
+                ok, track = pcall(function() return h:LoadAnimation(jerkAnim) end)
+            end
+            if not ok or not track then
+                task.wait(0.2)
+                continue
+            end
+
             jerkTrack = track
-            track.Priority = Enum.AnimationPriority.Action4
-            track:Play()
-            track:AdjustSpeed(0.7)
-            track.TimePosition = 0.6
+            pcall(function()
+                track.Priority = Enum.AnimationPriority.Action4
+                track.Looped = false
+                track:Play(0.05, 1, 0.7)
+                track.TimePosition = 0.6
+            end)
             task.wait(0.1)
             while jerkPlaying and track and track.IsPlaying and track.TimePosition < 0.7 do
                 task.wait(0.05)
             end
             if track then
-                pcall(function() track:Stop() end)
+                pcall(function() track:Stop(0.05) end)
             end
             if jerkTrack == track then
                 jerkTrack = nil
@@ -11447,13 +11498,100 @@ local bangTarget = nil
 local bangSpeed = 22
 local bangRunning = false
 local bangGen = 0
+local bangConn = nil
 Act.bangActive = false
+Act.bangMode = "behind"
+
+local BANG_MODES = {
+    behind = true,
+    under = true,
+    strafe = true,
+    front = true,
+    above = true,
+}
+
+local function normalizeBangMode(mode)
+    local m = tostring(mode or "behind"):lower()
+    if m == "back" then m = "behind" end
+    if m == "top" then m = "above" end
+    if m == "bottom" or m == "below" then m = "under" end
+    if m == "side" then m = "strafe" end
+    if not BANG_MODES[m] then m = "behind" end
+    return m
+end
+
+local function restoreBangTargetRoot()
+    local s = Act.bangTargetSave
+    if not s then return end
+    local r = s.root
+    if r and r.Parent then
+        pcall(function()
+            r.Size = s.Size
+            r.CanCollide = s.CanCollide
+            r.Massless = s.Massless
+            r.Transparency = s.Transparency
+            if s.Parent and r.Parent ~= s.Parent then
+                r.Parent = s.Parent
+            end
+        end)
+    end
+    Act.bangTargetSave = nil
+end
+
+local function applyBangTargetRoot(tRoot)
+    local s = Act.bangTargetSave
+    if s and s.root == tRoot then
+        pcall(function()
+            tRoot.CanCollide = false
+            tRoot.Massless = true
+        end)
+        return
+    end
+    restoreBangTargetRoot()
+    Act.bangTargetSave = {
+        root = tRoot,
+        Parent = tRoot.Parent,
+        Size = tRoot.Size,
+        CanCollide = tRoot.CanCollide,
+        Massless = tRoot.Massless,
+        Transparency = tRoot.Transparency,
+    }
+    pcall(function()
+        -- Local-only soft mods so you can sit in their root without bounce
+        tRoot.CanCollide = false
+        tRoot.Massless = true
+        tRoot.Size = Vector3.new(
+            math.max(tRoot.Size.X, 2),
+            math.max(tRoot.Size.Y, 2),
+            math.max(tRoot.Size.Z, 1)
+        )
+    end)
+end
+
+local function bangOffsetCF(mode, pulse)
+    if mode == "under" then
+        return CFrame.new(0, -2.35 + pulse * 0.35, 0.15)
+    elseif mode == "strafe" then
+        return CFrame.new(pulse * 2.1, 0, 0.85)
+    elseif mode == "front" then
+        return CFrame.new(0, 0, -(1.05 + pulse * 0.65))
+    elseif mode == "above" then
+        return CFrame.new(0, 2.55 + pulse * 0.4, 0)
+    end
+    -- behind (default): back/forth on +Z
+    return CFrame.new(0, 0, 1.05 + pulse * 0.65)
+end
 
 local function stopBang()
     bangGen = bangGen + 1
     bangTarget = nil
     bangRunning = false
     Act.bangActive = false
+    if bangConn then
+        pcall(function() bangConn:Disconnect() end)
+        bangConn = nil
+    end
+    restoreBangTargetRoot()
     local myChar = LocalPlayer.Character
     local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
     if myHum then
@@ -11464,12 +11602,13 @@ local function stopBang()
     end
 end
 
-local function startBang(target, speed)
+local function startBang(target, mode, speed)
     if not target or target == LocalPlayer then return end
     if Act.invisActive then return end
     stopBang()
     if Act.headSitOff then Act.headSitOff() end
     bangTarget = target
+    Act.bangMode = normalizeBangMode(mode)
     bangSpeed = math.clamp(tonumber(speed) or 22, 1, 100)
     bangRunning = true
     Act.bangActive = true
@@ -11477,78 +11616,42 @@ local function startBang(target, speed)
     local gen = bangGen
     Perf.noclipAt = 0
 
-    -- Heartbeat + PreAnimation sync on LOCAL character only.
-    -- Never write other players' velocity/CFrame (breaks their Twilight / movement).
-    task.spawn(function()
-        local zero = Vector3.zero
-        while bangRunning and bangGen == gen and bangTarget and scriptActive do
-            if Act.invisActive or not bangTarget.Parent then
-                break
+    -- Track their HRP every frame → relative CFrame by mode → zero vel → repeat
+    bangConn = RunService.Heartbeat:Connect(function()
+        if not bangRunning or bangGen ~= gen or not bangTarget or not scriptActive then
+            if bangConn then
+                pcall(function() bangConn:Disconnect() end)
+                bangConn = nil
             end
-
-            local tChar = bangTarget.Character
-            local tRoot = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
-            local myChar = LocalPlayer.Character
-            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-            local myRoot = myHum and (myHum.RootPart or myChar:FindFirstChild("HumanoidRootPart"))
-            if not tRoot or not myRoot or not myHum or myHum.Health <= 0 then
-                RunService.Heartbeat:Wait()
-                continue
-            end
-
-            RunService.Heartbeat:Wait()
-            if not bangRunning or bangGen ~= gen or not bangTarget then break end
-
-            tChar = bangTarget.Character
-            tRoot = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
-            myChar = LocalPlayer.Character
-            myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-            myRoot = myHum and (myHum.RootPart or myChar:FindFirstChild("HumanoidRootPart"))
-            if not tRoot or not myRoot or not myHum then
-                continue
-            end
-
-            pcall(function()
-                myHum.PlatformStand = true
-                myHum.AutoRotate = false
-                myHum:ChangeState(Enum.HumanoidStateType.Physics)
-            end)
-            for _, p in ipairs(myChar:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    p.CanCollide = false
-                end
-            end
-
-            local thrust = 0.9 + math.sin(tick() * bangSpeed) * 0.85
-            myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 0, thrust)
-            myRoot.AssemblyLinearVelocity = zero
-            myRoot.AssemblyAngularVelocity = zero
-
-            RunService.PreAnimation:Wait()
-            if not bangRunning or bangGen ~= gen or not bangTarget then break end
-
-            tRoot = bangTarget.Character and (bangTarget.Character:FindFirstChild("HumanoidRootPart") or bangTarget.Character:FindFirstChild("Torso") or bangTarget.Character:FindFirstChild("UpperTorso"))
-            myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if tRoot and myRoot then
-                thrust = 0.9 + math.sin(tick() * bangSpeed) * 0.85
-                myRoot.CFrame = tRoot.CFrame * CFrame.new(0, 0, thrust)
-                myRoot.AssemblyLinearVelocity = zero
-                myRoot.AssemblyAngularVelocity = zero
-            end
+            return
         end
-        if bangGen == gen then
-            bangRunning = false
-            Act.bangActive = false
-            local myChar = LocalPlayer.Character
-            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-            if myHum then
-                pcall(function()
-                    myHum.PlatformStand = false
-                    myHum.AutoRotate = true
-                end)
-            end
+        if Act.invisActive or not bangTarget.Parent then
+            stopBang()
+            return
         end
+
+        local tChar = bangTarget.Character
+        local tRoot = tChar and (tChar:FindFirstChild("HumanoidRootPart") or tChar:FindFirstChild("Torso") or tChar:FindFirstChild("UpperTorso"))
+        local myChar = LocalPlayer.Character
+        local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not tRoot or not myRoot or not myHum or myHum.Health <= 0 then
+            return
+        end
+
+        applyBangTargetRoot(tRoot)
+
+        if not myHum.PlatformStand then
+            myHum.PlatformStand = true
+            myHum.AutoRotate = false
+        end
+
+        local pulse = math.sin(tick() * bangSpeed)
+        myRoot.CFrame = tRoot.CFrame * bangOffsetCF(Act.bangMode, pulse)
+        myRoot.AssemblyLinearVelocity = Vector3.zero
+        myRoot.AssemblyAngularVelocity = Vector3.zero
     end)
+    table.insert(connections, bangConn)
 end
 
 cmdCommands["bang"] = "NEEDS_ARG"
@@ -11747,6 +11850,7 @@ local flyConnection = nil
 local flyBodyVel = nil
 local flyBodyGyro = nil
 local FLY_SPEED = 50
+Act.flyActive = false
 
 cmdCommands["fly"] = "NEEDS_ARG"
 
@@ -11779,14 +11883,9 @@ end
 
 local function attachFlyParts(char)
     if not char then return false end
+    -- Never WaitForChild here — fly Heartbeat must not yield
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hrp then
-        hrp = char:WaitForChild("HumanoidRootPart", 5)
-    end
-    if not hum then
-        hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
-    end
     if not hrp or not hum or not char.Parent then return false end
 
     local oldBv = hrp:FindFirstChild("XthosFlyVel")
@@ -11801,6 +11900,14 @@ local function attachFlyParts(char)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
     end)
+
+    -- Ghost / character must be free to move
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then
+            p.Anchored = false
+            p.CanCollide = false
+        end
+    end
 
     flyBodyVel = Instance.new("BodyVelocity")
     flyBodyVel.Name = "XthosFlyVel"
@@ -11834,10 +11941,15 @@ end
 local function getFlyRoot()
     if Act.invisActive and Act.invisGhost and Act.invisGhost.Parent then
         local gr = Act.invisGhost:FindFirstChild("HumanoidRootPart")
-        if gr then return Act.invisGhost, gr, Act.invisGhost:FindFirstChildOfClass("Humanoid") end
+            or Act.invisGhostRoot
+        local gh = Act.invisGhost:FindFirstChildOfClass("Humanoid")
+            or Act.invisGhostHum
+        if gr and gh then
+            return Act.invisGhost, gr, gh
+        end
     end
     local char = LocalPlayer.Character
-    if not char then return nil, nil, nil end
+    if not char or Act.isTwilightLocalClone(char) then return nil, nil, nil end
     return char, char:FindFirstChild("HumanoidRootPart"), char:FindFirstChildOfClass("Humanoid")
 end
 
@@ -11849,9 +11961,20 @@ local function ensureFlyLoop()
         local c, root, h = getFlyRoot()
         if not c or not root or not h or h.Health <= 0 then return end
 
+        -- If ghosting, never leave movers on the buried real body
+        if Act.invisActive and Act.invisGhost and c == Act.invisGhost then
+            local real = LocalPlayer.Character
+            if real and real ~= c then
+                local rhrp = real:FindFirstChild("HumanoidRootPart")
+                if rhrp and (rhrp:FindFirstChild("XthosFlyVel") or rhrp:FindFirstChild("XthosFlyGyro")) then
+                    clearFlyParts(real)
+                end
+            end
+        end
+
         local bvel = root:FindFirstChild("XthosFlyVel")
         local bgyro = root:FindFirstChild("XthosFlyGyro")
-        if not bvel or not bgyro then
+        if not bvel or not bgyro or not bvel.Parent or not bgyro.Parent then
             if not attachFlyParts(c) then return end
             bvel = root:FindFirstChild("XthosFlyVel")
             bgyro = root:FindFirstChild("XthosFlyGyro")
@@ -11861,6 +11984,8 @@ local function ensureFlyLoop()
         pcall(function()
             h.PlatformStand = true
             h.AutoRotate = false
+            root.Anchored = false
+            root.CanCollide = false
             root.AssemblyAngularVelocity = Vector3.zero
         end)
 
@@ -11903,13 +12028,13 @@ end
 local function startFly(speed)
     if speed then FLY_SPEED = tonumber(speed) or FLY_SPEED end
     flyActive = true
+    Act.flyActive = true
     syncToggle("Fly", true)
     ensureFlyLoop()
     local real = LocalPlayer.Character
     local char = real
     if Act.invisActive and Act.invisGhost and Act.invisGhost.Parent then
         char = Act.invisGhost
-        -- Don't leave movers on the buried real body
         if real and real ~= char then
             clearFlyParts(real)
         end
@@ -11917,11 +12042,25 @@ local function startFly(speed)
     if char then
         attachFlyParts(char)
     end
+    -- Ghost may finish setup a frame late — rebind once more
+    if Act.invisActive then
+        task.defer(function()
+            if not flyActive or not Act.invisActive then return end
+            local ghost = Act.invisGhost
+            if ghost and ghost.Parent then
+                if real and real.Parent and real ~= ghost then
+                    clearFlyParts(real)
+                end
+                attachFlyParts(ghost)
+            end
+        end)
+    end
 end
 
 cmdCommands["unfly"] = function()
     if not flyActive and not flyConnection then return end
     flyActive = false
+    Act.flyActive = false
     syncToggle("Fly", false)
     if flyConnection then
         flyConnection:Disconnect()
@@ -12719,7 +12858,7 @@ Act.freezeOff = cmdCommands["unfreeze"]
                 end
             end)
 
-            local flying = flyActive == true
+            local flying = (flyActive == true) or (Act.flyActive == true)
             if not flying then
                 pcall(function()
                     ghostHum.PlatformStand = false
@@ -12753,7 +12892,13 @@ Act.freezeOff = cmdCommands["unfreeze"]
                     ghostHum:Move(Vector3.zero, false)
                     ghostHum.PlatformStand = true
                     ghostHum.AutoRotate = false
+                    ghostRoot.Anchored = false
+                    ghostRoot.CanCollide = false
                 end)
+                -- Ensure fly movers stayed on the ghost (can fall off after clone/rebind races)
+                if not ghostRoot:FindFirstChild("XthosFlyVel") or not ghostRoot:FindFirstChild("XthosFlyGyro") then
+                    if Act.flyOn then pcall(function() Act.flyOn() end) end
+                end
                 stopGhostAnims(0.1)
             end
 
@@ -12898,6 +13043,11 @@ Act.freezeOff = cmdCommands["unfreeze"]
 
         if flyActive and Act.flyOn then
             pcall(function() Act.flyOn() end)
+            task.defer(function()
+                if flyActive and Act.invisActive and Act.flyOn then
+                    pcall(function() Act.flyOn() end)
+                end
+            end)
         end
 
         if Act._invisDied then
@@ -14164,7 +14314,12 @@ cmdInput.FocusLost:Connect(function(enterPressed)
         elseif cmd == "bang" and arg ~= "" then
             local target = findPlayer(arg)
             if target then
-                startBang(target, parts[3])
+                local a3, a4 = parts[3], parts[4]
+                if a3 and not tonumber(a3) then
+                    startBang(target, a3, a4)
+                else
+                    startBang(target, "behind", a3)
+                end
             end
         elseif cmd == "emote" and arg ~= "" then
             if Act.playCatalogEmote then
