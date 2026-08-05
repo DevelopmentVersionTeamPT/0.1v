@@ -4049,9 +4049,81 @@ tabs["Emote"] = createTabContent()
     end
 
     -- Catalog emote IDs must be resolved to nested Animation IDs before LoadAnimation.
-    local animResolveCache = {} -- [emoteId] = animationId (only successful resolves)
+    -- Cache keys: "<emoteId>:r6" / "<emoteId>:r15"
+    local animResolveCache = {}
     local lastPlayClick = 0
     local playToken = 0
+
+    -- Direct Animation assets that actually drive R6 motors (catalog EmoteAnimations are almost all R15-only)
+    local R6_EMOTE_POOL = {
+        {name = "Dance", id = 182435998, creator = "R6"},
+        {name = "Dance 2", id = 182436842, creator = "R6"},
+        {name = "Dance 3", id = 182436935, creator = "R6"},
+        {name = "Wave", id = 128777973, creator = "R6"},
+        {name = "Cheer", id = 129423030, creator = "R6"},
+        {name = "Laugh", id = 129424517, creator = "R6"},
+        {name = "Point", id = 128853357, creator = "R6"},
+        {name = "Sit", id = 178130996, creator = "R6"},
+        {name = "Climb", id = 180436334, creator = "R6"},
+        {name = "Fall", id = 180436148, creator = "R6"},
+        {name = "Idle", id = 180435571, creator = "R6"},
+        {name = "Walk", id = 180426354, creator = "R6"},
+        {name = "Jump", id = 125750702, creator = "R6"},
+        {name = "Tool Slash", id = 182436522, creator = "R6"},
+        {name = "Tool Lunge", id = 182436733, creator = "R6"},
+    }
+
+    local function isR6Humanoid(hum)
+        if not hum then
+            local char = LocalPlayer.Character
+            hum = char and char:FindFirstChildOfClass("Humanoid")
+        end
+        if not hum then return false end
+        local ok, rig = pcall(function() return hum.RigType end)
+        if ok and rig == Enum.HumanoidRigType.R6 then return true end
+        if ok and rig == Enum.HumanoidRigType.R15 then return false end
+        local char = hum.Parent
+        return char ~= nil and char:FindFirstChild("UpperTorso") == nil and char:FindFirstChild("Torso") ~= nil
+    end
+
+    local function activeEmotePool()
+        if isR6Humanoid(getHumanoid()) then
+            return R6_EMOTE_POOL
+        end
+        return EMOTE_POOL
+    end
+
+    local function setAnimateDisabled(disabled)
+        local char = LocalPlayer.Character
+        local animate = char and char:FindFirstChild("Animate")
+        if not animate then return end
+        if disabled then
+            if Act.catalogEmote._animateSaved == nil then
+                Act.catalogEmote._animateSaved = animate.Disabled
+            end
+            pcall(function() animate.Disabled = true end)
+        elseif Act.catalogEmote._animateSaved ~= nil then
+            pcall(function() animate.Disabled = Act.catalogEmote._animateSaved end)
+            Act.catalogEmote._animateSaved = nil
+        end
+    end
+
+    local function stopAllCharacterTracks(hum)
+        if not hum then return end
+        pcall(function()
+            for _, t in ipairs(hum:GetPlayingAnimationTracks()) do
+                pcall(function() t:Stop(0) end)
+            end
+        end)
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if animator then
+            pcall(function()
+                for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+                    pcall(function() t:Stop(0) end)
+                end
+            end)
+        end
+    end
 
     local function stopEmote()
         playToken = playToken + 1
@@ -4060,7 +4132,6 @@ tabs["Emote"] = createTabContent()
         if track then
             pcall(function() track:Stop(0.1) end)
         end
-        -- Also stop PlayEmote tracks we may have started
         local hum = getHumanoid()
         if hum then
             pcall(function()
@@ -4072,93 +4143,95 @@ tabs["Emote"] = createTabContent()
                 end
             end)
         end
+        setAnimateDisabled(false)
     end
 
-    local function extractAnimIdFromInstance(root)
-        if not root then return nil end
-        if root:IsA("Animation") then
-            return tostring(root.AnimationId):match("%d+")
+    local function collectAnimIdsFromInstance(root, preferR6)
+        local r6Ids, r15Ids, otherIds = {}, {}, {}
+        local seen = {}
+        local function add(list, num)
+            if not num or seen[num] then return end
+            seen[num] = true
+            list[#list + 1] = num
         end
-        local prefer = root:FindFirstChild("R15Anim")
-            or root:FindFirstChild("R15")
-            or root:FindFirstChild("play")
-            or root
-        local best = nil
-        local ok, desc = pcall(function() return prefer:GetDescendants() end)
+        if not root then return otherIds end
+        if root:IsA("Animation") then
+            add(otherIds, tostring(root.AnimationId):match("%d+"))
+            return otherIds
+        end
+        local ok, desc = pcall(function() return root:GetDescendants() end)
         if ok and typeof(desc) == "table" then
-            for i = 1, math.min(#desc, 200) do
+            for i = 1, math.min(#desc, 300) do
                 local d = desc[i]
                 if d and d:IsA("Animation") then
                     local num = tostring(d.AnimationId):match("%d+")
                     if num then
+                        local path = ""
+                        pcall(function() path = string.lower(d:GetFullName()) end)
                         local n = string.lower(d.Name)
-                        if n == "play" or n == "animation" or n == "emote" or n == "r15" then
-                            return num
+                        if path:find("r6", 1, true) or n:find("r6", 1, true) then
+                            add(r6Ids, num)
+                        elseif path:find("r15", 1, true) or n:find("r15", 1, true) then
+                            add(r15Ids, num)
+                        else
+                            add(otherIds, num)
                         end
-                        best = best or num
                     end
                 end
             end
         end
-        if best then return best end
-        if prefer ~= root then
-            ok, desc = pcall(function() return root:GetDescendants() end)
-            if ok and typeof(desc) == "table" then
-                for i = 1, math.min(#desc, 200) do
-                    local d = desc[i]
-                    if d and d:IsA("Animation") then
-                        local num = tostring(d.AnimationId):match("%d+")
-                        if num then return num end
-                    end
-                end
-            end
+        local out = {}
+        local function append(list)
+            for i = 1, #list do out[#out + 1] = list[i] end
         end
-        -- FindFirstChildWhichIsA deep
-        local anim
-        pcall(function()
-            anim = root:FindFirstChildWhichIsA("Animation", true)
-        end)
-        if anim then
-            return tostring(anim.AnimationId):match("%d+")
+        if preferR6 then
+            append(r6Ids); append(otherIds); append(r15Ids)
+        else
+            append(r15Ids); append(otherIds); append(r6Ids)
         end
-        return nil
+        return out
     end
 
-    local function resolveEmoteAnimationId(assetId)
+    local function extractAnimIdFromInstance(root, preferR6)
+        local ids = collectAnimIdsFromInstance(root, preferR6)
+        return ids[1]
+    end
+
+    local function resolveEmoteAnimationIds(assetId, preferR6)
         assetId = tostring(assetId or ""):match("%d+")
-        if not assetId then return nil end
-        if animResolveCache[assetId] then
-            return animResolveCache[assetId]
+        if not assetId then return {} end
+        local cacheKey = assetId .. (preferR6 and ":r6list" or ":r15list")
+        if animResolveCache[cacheKey] then
+            return animResolveCache[cacheKey]
         end
 
-        -- 1) GetObjects (executor / studio)
+        local ids = {}
         local ok, objs = pcall(function()
             return game:GetObjects("rbxassetid://" .. assetId)
         end)
         if ok and typeof(objs) == "table" and objs[1] then
-            local resolved = extractAnimIdFromInstance(objs[1])
+            ids = collectAnimIdsFromInstance(objs[1], preferR6)
             pcall(function() objs[1]:Destroy() end)
-            if resolved and resolved ~= "" then
-                animResolveCache[assetId] = resolved
-                return resolved
+        end
+        if #ids == 0 then
+            ok, objs = pcall(function()
+                return game:GetService("InsertService"):LoadAsset(tonumber(assetId))
+            end)
+            if ok and objs then
+                ids = collectAnimIdsFromInstance(objs, preferR6)
+                pcall(function() objs:Destroy() end)
             end
         end
-
-        -- 2) InsertService fallback
-        ok, objs = pcall(function()
-            return game:GetService("InsertService"):LoadAsset(tonumber(assetId))
-        end)
-        if ok and objs then
-            local resolved = extractAnimIdFromInstance(objs)
-            pcall(function() objs:Destroy() end)
-            if resolved and resolved ~= "" then
-                animResolveCache[assetId] = resolved
-                return resolved
-            end
+        if #ids > 0 then
+            animResolveCache[cacheKey] = ids
+            animResolveCache[assetId .. (preferR6 and ":r6" or ":r15")] = ids[1]
         end
+        return ids
+    end
 
-        -- Do NOT cache failures (catalog id ≠ animation id)
-        return nil
+    local function resolveEmoteAnimationId(assetId, preferR6)
+        local ids = resolveEmoteAnimationIds(assetId, preferR6)
+        return ids[1]
     end
 
     local function waitTrackReady(track, timeout)
@@ -4169,8 +4242,7 @@ tabs["Emote"] = createTabContent()
             local len = 0
             pcall(function() len = track.Length or 0 end)
             if len > 0 then return true end
-            if track.IsPlaying and (tick() - t0) > 0.35 then
-                -- some assets report Length late but are already driving
+            if track.IsPlaying and (tick() - t0) > 0.25 then
                 return true
             end
             task.wait(0.05)
@@ -4178,6 +4250,26 @@ tabs["Emote"] = createTabContent()
         local len = 0
         pcall(function() len = track.Length or 0 end)
         return len > 0 or (track and track.IsPlaying)
+    end
+
+    local function loadTrack(hum, animator, animId)
+        local formats = {
+            "rbxassetid://" .. animId,
+            "http://www.roblox.com/asset/?id=" .. animId,
+        }
+        for i = 1, #formats do
+            local anim = Instance.new("Animation")
+            anim.Name = "TwilightEmote_" .. animId
+            anim.AnimationId = formats[i]
+            local ok, track = pcall(function()
+                if animator then return animator:LoadAnimation(anim) end
+                return nil
+            end)
+            if ok and track then return track end
+            ok, track = pcall(function() return hum:LoadAnimation(anim) end)
+            if ok and track then return track end
+        end
+        return nil
     end
 
     local function playAnimationId(animId, label)
@@ -4188,15 +4280,8 @@ tabs["Emote"] = createTabContent()
             setStatus("No character")
             return false
         end
-        if hum.RigType ~= Enum.HumanoidRigType.R15 then
-            setStatus("Emotes need R15")
-            return false
-        end
         local animator = getAnimator(hum)
-        if not animator then
-            setStatus("No Animator")
-            return false
-        end
+        local r6 = isR6Humanoid(hum)
 
         local prev = Act.catalogEmote.track
         Act.catalogEmote.track = nil
@@ -4204,22 +4289,27 @@ tabs["Emote"] = createTabContent()
             pcall(function() prev:Stop(0.1) end)
         end
 
-        local trackOk, track = pcall(function()
-            local anim = Instance.new("Animation")
-            anim.Name = "TwilightEmote_" .. animId
-            anim.AnimationId = "rbxassetid://" .. animId
-            local t = animator:LoadAnimation(anim)
-            t.Looped = true
-            t.Priority = Enum.AnimationPriority.Action4
-            t:Play(0.15, 1, 1)
-            return t
-        end)
-        if not trackOk or not track then
+        if r6 then
+            setAnimateDisabled(true)
+            stopAllCharacterTracks(hum)
+        end
+
+        local track = loadTrack(hum, animator, animId)
+        if not track then
+            if r6 then setAnimateDisabled(false) end
             return false
         end
 
-        if not waitTrackReady(track, 1.8) then
+        pcall(function()
+            track.Looped = Act.catalogEmote.loop ~= false
+            track.Priority = Enum.AnimationPriority.Action4
+            track:Play(0.1, 1, 1)
+        end)
+
+        local readyTimeout = r6 and 2.5 or 1.8
+        if not waitTrackReady(track, readyTimeout) then
             pcall(function() track:Stop(0) end)
+            if r6 then setAnimateDisabled(false) end
             return false
         end
 
@@ -4243,37 +4333,53 @@ tabs["Emote"] = createTabContent()
 
         task.spawn(function()
             if token ~= playToken then return end
+            local hum = getHumanoid()
+            local preferR6 = isR6Humanoid(hum)
 
-            -- 1) Cached resolve
-            local animId = animResolveCache[id]
-            if animId then
-                if playAnimationId(animId, id) then
-                    if token == playToken then setStatus("Playing " .. id) end
-                    return
-                end
-                -- stale cache
-                animResolveCache[id] = nil
-                if token ~= playToken then return end
+            local function tryPlay(animId)
+                if not animId or token ~= playToken then return false end
+                return playAnimationId(animId, id)
             end
 
-            -- 2) Resolve catalog emote → nested Animation id, then play
-            animId = resolveEmoteAnimationId(id)
-            if token ~= playToken then return end
-            if animId and playAnimationId(animId, id) then
+            local cacheKey = id .. (preferR6 and ":r6" or ":r15")
+            local cached = animResolveCache[cacheKey]
+            if cached and tryPlay(cached) then
                 if token == playToken then setStatus("Playing " .. id) end
                 return
             end
-            if token ~= playToken then return end
 
-            -- 3) Direct Animation asset only if Length actually loads
-            if playAnimationId(id, id) then
-                animResolveCache[id] = id
+            -- Nested animations inside catalog EmoteAnimation (try all candidates)
+            local ids = resolveEmoteAnimationIds(id, preferR6)
+            for i = 1, #ids do
+                if tryPlay(ids[i]) then
+                    animResolveCache[cacheKey] = ids[i]
+                    if token == playToken then setStatus("Playing " .. id) end
+                    return
+                end
+                if token ~= playToken then return end
+            end
+
+            if preferR6 then
+                ids = resolveEmoteAnimationIds(id, false)
+                for i = 1, #ids do
+                    if tryPlay(ids[i]) then
+                        animResolveCache[cacheKey] = ids[i]
+                        if token == playToken then setStatus("Playing " .. id) end
+                        return
+                    end
+                    if token ~= playToken then return end
+                end
+            end
+
+            -- Direct Animation asset (R6 pool IDs are this)
+            if tryPlay(id) then
+                animResolveCache[cacheKey] = id
                 if token == playToken then setStatus("Playing " .. id) end
                 return
             end
 
             if token == playToken then
-                setStatus("Couldn't play " .. id .. " (need GetObjects)")
+                setStatus("Couldn't play " .. id .. (preferR6 and " on R6" or ""))
             end
         end)
         return true
@@ -4290,9 +4396,19 @@ tabs["Emote"] = createTabContent()
                 return playEmoteById(tostring(row.id))
             end
         end
+        local pool = activeEmotePool()
+        for _, row in ipairs(pool) do
+            if row.name == name and row.id then
+                return playEmoteById(tostring(row.id))
+            end
+        end
         local hum = getHumanoid()
         if not hum then
             setStatus("No character")
+            return false
+        end
+        if isR6Humanoid(hum) then
+            setStatus("Pick an emote from the list (R6)")
             return false
         end
         stopEmote()
@@ -4677,9 +4793,13 @@ tabs["Emote"] = createTabContent()
     -- Pick a batch that avoids the previous refresh's IDs (so Refresh feels new)
     local function showRotatedPoolBatch(batchSize)
         batchSize = batchSize or 18
+        local pool = activeEmotePool()
+        if pool == R6_EMOTE_POOL then
+            batchSize = #R6_EMOTE_POOL
+        end
         local fresh = {}
         local reuse = {}
-        for _, it in ipairs(EMOTE_POOL) do
+        for _, it in ipairs(pool) do
             if lastBatchIds[it.id] then
                 reuse[#reuse + 1] = it
             else
@@ -4690,7 +4810,7 @@ tabs["Emote"] = createTabContent()
         if #fresh < math.max(6, math.floor(batchSize / 2)) then
             lastBatchIds = {}
             fresh = {}
-            for _, it in ipairs(EMOTE_POOL) do
+            for _, it in ipairs(pool) do
                 fresh[#fresh + 1] = it
             end
             reuse = {}
@@ -4752,6 +4872,14 @@ tabs["Emote"] = createTabContent()
 
             -- ALWAYS show a different local batch first (guaranteed visible change)
             showRotatedPoolBatch(18)
+
+            -- Catalog EmoteAnimations are R15-only — stick to the R6 animation pool
+            if isR6Humanoid(getHumanoid()) then
+                hasMorePages = false
+                loadingPages = false
+                setRefreshLabel("Refresh Catalog")
+                return
+            end
 
             -- Skip ahead N pages for live catalog variety
             local skipsLeft = pagesToSkip
@@ -5025,7 +5153,25 @@ tabs["Emote"] = createTabContent()
     listScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(maybeLoadMore)
     listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(maybeLoadMore)
 
+    table.insert(connections, LocalPlayer.CharacterAdded:Connect(function()
+        task.delay(0.45, function()
+            if not scriptActive then return end
+            if Act.stopCatalogEmote then
+                pcall(Act.stopCatalogEmote)
+            end
+            if isR6Humanoid(getHumanoid()) then
+                showRotatedPoolBatch(#R6_EMOTE_POOL)
+                hasMorePages = false
+            end
+        end)
+    end))
+
     task.spawn(function()
+        -- Wait briefly for character so R6 detection is correct on first open
+        local t0 = tick()
+        while not LocalPlayer.Character and (tick() - t0) < 2 do
+            task.wait(0.1)
+        end
         fetchCatalogPage(true)
     end)
 end)()
@@ -11520,54 +11666,6 @@ local function normalizeBangMode(mode)
     return m
 end
 
-local function restoreBangTargetRoot()
-    local s = Act.bangTargetSave
-    if not s then return end
-    local r = s.root
-    if r and r.Parent then
-        pcall(function()
-            r.Size = s.Size
-            r.CanCollide = s.CanCollide
-            r.Massless = s.Massless
-            r.Transparency = s.Transparency
-            if s.Parent and r.Parent ~= s.Parent then
-                r.Parent = s.Parent
-            end
-        end)
-    end
-    Act.bangTargetSave = nil
-end
-
-local function applyBangTargetRoot(tRoot)
-    local s = Act.bangTargetSave
-    if s and s.root == tRoot then
-        pcall(function()
-            tRoot.CanCollide = false
-            tRoot.Massless = true
-        end)
-        return
-    end
-    restoreBangTargetRoot()
-    Act.bangTargetSave = {
-        root = tRoot,
-        Parent = tRoot.Parent,
-        Size = tRoot.Size,
-        CanCollide = tRoot.CanCollide,
-        Massless = tRoot.Massless,
-        Transparency = tRoot.Transparency,
-    }
-    pcall(function()
-        -- Local-only soft mods so you can sit in their root without bounce
-        tRoot.CanCollide = false
-        tRoot.Massless = true
-        tRoot.Size = Vector3.new(
-            math.max(tRoot.Size.X, 2),
-            math.max(tRoot.Size.Y, 2),
-            math.max(tRoot.Size.Z, 1)
-        )
-    end)
-end
-
 local function bangOffsetCF(mode, pulse)
     if mode == "under" then
         return CFrame.new(0, -2.35 + pulse * 0.35, 0.15)
@@ -11591,7 +11689,6 @@ local function stopBang()
         pcall(function() bangConn:Disconnect() end)
         bangConn = nil
     end
-    restoreBangTargetRoot()
     local myChar = LocalPlayer.Character
     local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
     if myHum then
@@ -11616,7 +11713,7 @@ local function startBang(target, mode, speed)
     local gen = bangGen
     Perf.noclipAt = 0
 
-    -- Track their HRP every frame → relative CFrame by mode → zero vel → repeat
+    -- Local attach only — never touch their root (Massless/Size freezes them on your client)
     bangConn = RunService.Heartbeat:Connect(function()
         if not bangRunning or bangGen ~= gen or not bangTarget or not scriptActive then
             if bangConn then
@@ -11639,8 +11736,6 @@ local function startBang(target, mode, speed)
             return
         end
 
-        applyBangTargetRoot(tRoot)
-
         if not myHum.PlatformStand then
             myHum.PlatformStand = true
             myHum.AutoRotate = false
@@ -11648,7 +11743,7 @@ local function startBang(target, mode, speed)
 
         local pulse = math.sin(tick() * bangSpeed)
         myRoot.CFrame = tRoot.CFrame * bangOffsetCF(Act.bangMode, pulse)
-        myRoot.AssemblyLinearVelocity = Vector3.zero
+        myRoot.AssemblyLinearVelocity = tRoot.AssemblyLinearVelocity
         myRoot.AssemblyAngularVelocity = Vector3.zero
     end)
     table.insert(connections, bangConn)
